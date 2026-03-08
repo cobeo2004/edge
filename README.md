@@ -180,6 +180,74 @@ const server = newEdgeFunctionServer({
 
 > **Note:** Only the host-facing HTTP server is adapted. Worker communication (`worker.request()`) always uses `node:http` over Unix sockets — all three runtimes support this via Node.js compatibility layers.
 
+## Environment Variables & Secrets
+
+`EdgeFunctionServer` automatically loads `.env` files and supports programmatic env var injection with secret masking in logs.
+
+### `.env` file loading
+
+Place `.env` files in your functions directory for automatic loading:
+
+```
+functions/
+├── .env              ← global, applied to all workers
+├── hello/
+│   └── index.ts
+└── greet/
+    ├── .env          ← per-function, applied only to greet
+    └── index.ts
+```
+
+### Precedence (lowest → highest)
+
+1. `process.env` (host environment)
+2. Global `.env` at `functionsDir/.env`
+3. Additional `envFiles` (array order)
+4. `EdgeFunctionServerOptions.env` (programmatic)
+5. Per-function `.env` at `functionsDir/<name>/.env`
+6. `workerOptions.env` (programmatic per-worker)
+
+### Server-level env options
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  env: { API_KEY: "my-key" },            // applied to all workers
+  envFiles: ["/path/to/extra.env"],       // additional .env files
+  maskSecrets: true,                      // mask env values in logs (default: true)
+});
+```
+
+### Worker-level env option
+
+```ts
+const worker = await newDenoHTTPWorker(script, {
+  runFlags: ["--allow-net", "--allow-env"],
+  env: { MY_VAR: "value" },  // merged on top of process.env
+});
+```
+
+### Secret masking
+
+When `maskSecrets` is enabled (the default), all env var values are automatically replaced with `***` in log output. Values shorter than 3 characters are not masked. Disable with `maskSecrets: false`.
+
+### Standalone utilities
+
+The `.env` parser and secret masker are exported for direct use:
+
+```ts
+import { parseEnvFile, loadEnvFile, createSecretMasker } from "@cobeo2004/edge";
+
+const vars = parseEnvFile('KEY="value"\n# comment\nFOO=bar');
+// { KEY: "value", FOO: "bar" }
+
+const vars2 = await loadEnvFile("/path/to/.env"); // {} on ENOENT
+
+const mask = createSecretMasker(["my-secret-key"]);
+mask("token is my-secret-key"); // "token is ***"
+```
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -189,6 +257,7 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `runFlags`                 | `string[]`                         | Deno permission flags (e.g. `["--allow-net"]`)                                           |
 | `importMapPath`            | `string`                           | Path to an import map JSON file                                                          |
 | `configPath`               | `string`                           | Path to a `deno.json` config file                                                        |
+| `env`                      | `Record<string, string>`           | Environment variables merged on top of `process.env`                                     |
 | `denoExecutable`           | `string \| string[]`               | Path to the Deno binary (default: `"deno"`)                                              |
 | `logLevel`                 | `LogLevel`                         | Logging verbosity: `"debug"`, `"info"`, `"warn"`, `"error"`, `"silent"` (default)        |
 | `onLog`                    | `(level, source, message) => void` | Custom log handler (default: `console.log`/`console.error` with `[deno]` prefix)         |
@@ -210,6 +279,9 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `workerOptions` | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                                |
 | `logLevel`      | `LogLevel`                                       | Log level for all function workers (default: `"silent"`)                                        |
 | `onLog`         | `(functionName, level, source, message) => void` | Custom log handler with function name context (default: `[deno:${name}]` prefix)                |
+| `env`           | `Record<string, string>`                         | Environment variables applied to all workers                                                    |
+| `envFiles`      | `string[]`                                       | Additional `.env` file paths loaded at startup                                                  |
+| `maskSecrets`   | `boolean`                                        | Mask env var values in log output (default: `true`)                                             |
 
 ## Logging
 
@@ -313,6 +385,9 @@ Alternatively, use `configPath` to point to a full `deno.json` which supports `i
 | `detectRuntime()`                   | Function | Detect current runtime (`"node"`, `"bun"`, or `"deno"`)         |
 | `resolveAdapter(option?)`           | Function | Resolve a `ServerAdapter` from a runtime name or custom adapter |
 | `nodeAdapter`                       | Object   | Built-in Node.js server adapter                                 |
+| `parseEnvFile(content)`             | Function | Parse `.env` file content into a key-value record               |
+| `loadEnvFile(path)`                 | Function | Load and parse a `.env` file (returns `{}` on ENOENT)           |
+| `createSecretMasker(secrets)`       | Function | Create a function that masks secret values in strings           |
 
 ## License
 

@@ -31,15 +31,16 @@ Make `@cobeo2004/edge` a production-grade, self-hosted Deno edge function runtim
 
 ### Environment Variables & Secrets Management
 
-**Status:** Not started
+**Status:** Done
 
-Supabase automatically loads `.env` files and provides a secrets management layer (`supabase secrets set`). Currently, `@cobeo2004/edge` has no built-in env var handling — users must pass `--allow-env` and manage variables manually via `spawnOptions.env`.
-
-**Planned:**
-- Per-function `.env` file loading (auto-discover `functions/<name>/.env`)
-- Global `.env` support at the functions directory root
-- Programmatic API to set/override env vars per worker
-- Secret masking in log output
+Built-in `.env` loading and secret masking for both workers and the edge function server:
+- Global `.env` at `functionsDir/.env` auto-loaded at startup
+- Per-function `.env` at `functionsDir/<name>/.env` auto-loaded per worker
+- Additional `envFiles` array for extra `.env` paths
+- Programmatic `env` option on both `EdgeFunctionServerOptions` and `DenoWorkerOptions`
+- Six-layer precedence: `process.env` → global `.env` → `envFiles` → programmatic `env` → per-function `.env` → `workerOptions.env`
+- Secret masking in log output (enabled by default, opt-out with `maskSecrets: false`)
+- Exported utilities: `parseEnvFile()`, `loadEnvFile()`, `createSecretMasker()`
 
 ### Execution Limits
 
