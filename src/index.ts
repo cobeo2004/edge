@@ -1,6 +1,16 @@
-export {
+export type {
   DenoHTTPWorker,
   DenoWorkerOptions,
+  LogLevel,
   MinimalChildProcess,
+} from "./worker/index.js";
+export {
+  EarlyExitDenoHTTPWorkerError,
   newDenoHTTPWorker,
-} from "./DenoHTTPWorker.js";
+} from "./worker/index.js";
+
+export {
+  EdgeFunctionServer,
+  type EdgeFunctionServerOptions,
+  newEdgeFunctionServer,
+} from "./server/index.js";
