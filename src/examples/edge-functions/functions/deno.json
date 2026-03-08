@@ -1,0 +1,7 @@
+{
+  "nodeModulesDir": "auto",
+  "imports": {
+    "std/fmt/": "https://deno.land/std@0.224.0/fmt/",
+    "my-utils/": "./local-import-map/utils/"
+  }
+}
