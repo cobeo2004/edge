@@ -67,6 +67,7 @@ describe("EdgeFunctionServer – lifecycle", { timeout: 15_000 }, () => {
 
     expect(readyFunctions.sort()).toEqual([
       "echo",
+      "env-test",
       "hello",
       "import-map-test",
       "npm-import",

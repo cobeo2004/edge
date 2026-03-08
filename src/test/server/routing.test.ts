@@ -22,6 +22,7 @@ describe("EdgeFunctionServer – routing", { timeout: 15_000 }, () => {
     const fns = server.listFunctions();
     expect(fns).toEqual([
       "echo",
+      "env-test",
       "hello",
       "import-map-test",
       "npm-import",

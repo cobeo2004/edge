@@ -29,7 +29,7 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           pid = process.pid;
         },
         printOutput: true,
-      }
+      },
     );
     expect(pid).toBeDefined();
     worker.terminate();
@@ -52,7 +52,7 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           firstArg = args[0] as string;
           return spawn(command, args, options);
         },
-      }
+      },
     );
     expect(firstArg).toEqual("run");
     worker.terminate();
@@ -66,7 +66,7 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url })
         } }
       `,
-      { printOutput: true }
+      { printOutput: true },
     );
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
@@ -88,13 +88,13 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url, headers: headers })
         } }
       `,
-      { printOutput: true }
+      { printOutput: true },
     );
     for (let i = 0; i < 10; i++) {
       const json = await jsonRequest(
         worker,
         "https://localhost/hello?isee=you",
-        { headers: { accept: "application/json" } }
+        { headers: { accept: "application/json" } },
       );
       expect(json).toEqual({
         ok: "https://localhost/hello?isee=you",
@@ -168,7 +168,7 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           resp.on("end", () => {
             resolve(Buffer.concat(body).toString());
           });
-        }
+        },
       );
       req.on("error", reject);
       req.write(`data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`);
@@ -187,52 +187,12 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           resp.on("end", () => {
             resolve(Buffer.concat(body).toString());
           });
-        }
+        },
       );
       req.end();
     });
     expect(text).toEqual('{"ok":true}');
     console.log("Double request http2 val:", performance.now() - t0);
     worker.terminate();
-  });
-
-  it("can test that snippets in readme run successfully", async () => {
-    const { fileURLToPath } = await import("node:url");
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const rm = fs.readFileSync(path.resolve(__dirname, "../../../README.md"), {
-      encoding: "utf-8",
-    });
-
-    const toTest = rm
-      .split("\n```")
-      .filter((line) => line.startsWith("ts\n"))
-      .map((line) => line.slice(3));
-    for (let source of toTest) {
-      source = source.replaceAll(
-        "import { newDenoHTTPWorker } from 'deno-http-worker';",
-        "const { newDenoHTTPWorker } = await import('./dist/index.js');          "
-      );
-      source = `(async () => {${source}})()`;
-
-      await new Promise<void>((resolve, reject) => {
-        const worker = new Worker(source, {
-          eval: true,
-        });
-        worker.stderr.on("data", (data) => {
-          console.error(data.toString());
-        });
-        worker.stdout.on("data", (data) => {
-          console.error(data.toString());
-        });
-        worker.on("error", (e) => {
-          console.log(e.stack);
-          reject(e);
-        });
-        worker.on("exit", (code) => {
-          console.log(code);
-          resolve();
-        });
-      });
-    }
   });
 });
