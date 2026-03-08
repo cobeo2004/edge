@@ -1,0 +1,6 @@
+{
+  "nodeModulesDir": "auto",
+  "imports": {
+    "my-utils": "./functions/import-map-test/utils.ts"
+  }
+}
