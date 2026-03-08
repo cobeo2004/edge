@@ -116,6 +116,14 @@ export class EdgeFunctionServer {
     }
   }
 
+  get port(): number {
+    const addr = this.#server?.address();
+    if (!addr || typeof addr === "string") {
+      throw new Error("Server is not listening");
+    }
+    return addr.port;
+  }
+
   listFunctions(): string[] {
     return [...this.#functions.keys()].sort();
   }

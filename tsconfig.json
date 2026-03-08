@@ -21,6 +21,7 @@
     "dist",
     "deno-bootstrap",
     "src/test",
+    "src/examples",
     "src/examples/edge-functions/functions"
   ]
 }
