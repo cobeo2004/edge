@@ -79,7 +79,7 @@ const server = originalServe.call(Deno, {
     if (req.headers.has("X-Deno-Worker-Connection")) {
       req.headers.set(
         "connection",
-        req.headers.get("X-Deno-Worker-Connection")!,
+        req.headers.get("X-Deno-Worker-Connection")!
       );
     }
 

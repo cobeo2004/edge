@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 
 const SERVE_BOOTSTRAP_PATH = path.resolve(
   __dirname,
-  "../../deno-bootstrap/serve.ts",
+  "../../deno-bootstrap/serve.ts"
 );
 
 const ENTRYPOINT_NAMES = ["index.ts", "index.tsx", "index.js", "index.mjs"];
@@ -44,7 +44,12 @@ export interface EdgeFunctionServerOptions {
   /** Log level for worker output. Defaults to "silent" */
   logLevel?: LogLevel;
   /** Custom log handler for worker output, receives the function name */
-  onLog?: (functionName: string, level: LogLevel, source: "stdout" | "stderr" | "command", message: string) => void;
+  onLog?: (
+    functionName: string,
+    level: LogLevel,
+    source: "stdout" | "stderr" | "command",
+    message: string
+  ) => void;
 }
 
 export class EdgeFunctionServer {
@@ -82,9 +87,7 @@ export class EdgeFunctionServer {
 
     if (this.#options.eagerSpawn) {
       await Promise.all(
-        [...this.#functions.keys()].map((name) =>
-          this.#getOrCreateWorker(name),
-        ),
+        [...this.#functions.keys()].map((name) => this.#getOrCreateWorker(name))
       );
     }
   }
@@ -157,11 +160,11 @@ export class EdgeFunctionServer {
 
   async #handleRequest(
     req: http.IncomingMessage,
-    res: http.ServerResponse,
+    res: http.ServerResponse
   ): Promise<void> {
     const url = new URL(
       req.url ?? "/",
-      `http://${req.headers.host ?? "localhost"}`,
+      `http://${req.headers.host ?? "localhost"}`
     );
     const segments = url.pathname.split("/").filter(Boolean);
     const functionName = segments[0];
@@ -199,7 +202,7 @@ export class EdgeFunctionServer {
       (proxyRes) => {
         res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
         proxyRes.pipe(res);
-      },
+      }
     );
 
     proxyReq.on("error", (err) => {
@@ -248,18 +251,20 @@ export class EdgeFunctionServer {
 
   async #spawnWorker(
     name: string,
-    entrypoint: string,
+    entrypoint: string
   ): Promise<DenoHTTPWorker> {
     const userOptions = this.#options.workerOptions ?? {};
     const defaultRunFlags = ["--allow-net", "--allow-env"];
     const runFlags = userOptions.runFlags ?? defaultRunFlags;
 
-    const logLevel = this.#options.logLevel ?? userOptions.logLevel ?? undefined;
+    const logLevel =
+      this.#options.logLevel ?? userOptions.logLevel ?? undefined;
     let onLog = userOptions.onLog;
 
     if (this.#options.onLog) {
       const serverOnLog = this.#options.onLog;
-      onLog = (level, source, message) => serverOnLog(name, level, source, message);
+      onLog = (level, source, message) =>
+        serverOnLog(name, level, source, message);
     } else if (logLevel && logLevel !== "silent" && !onLog) {
       onLog = (_level, source, message) => {
         if (source === "stderr") {
@@ -304,16 +309,16 @@ export class EdgeFunctionServer {
             if (this.#workers.has(functionName)) {
               await this.restartFunction(functionName);
             }
-          }, 200),
+          }, 200)
         );
-      },
+      }
     );
   }
 }
 
 /** Convenience factory */
 export function newEdgeFunctionServer(
-  options: EdgeFunctionServerOptions,
+  options: EdgeFunctionServerOptions
 ): EdgeFunctionServer {
   return new EdgeFunctionServer(options);
 }

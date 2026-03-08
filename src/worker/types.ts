@@ -112,7 +112,11 @@ export interface DenoWorkerOptions {
    * If not provided, logs are written to console.log (stdout) or
    * console.error (stderr) with a "[deno]" prefix.
    */
-  onLog?: (level: LogLevel, source: "stdout" | "stderr" | "command", message: string) => void;
+  onLog?: (
+    level: LogLevel,
+    source: "stdout" | "stderr" | "command",
+    message: string
+  ) => void;
 
   /**
    * Path to an import map file (JSON). This is passed to Deno as

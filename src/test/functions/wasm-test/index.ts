@@ -9,9 +9,9 @@ await initializeImageMagick(
   await Deno.readFile(
     new URL(
       "magick.wasm",
-      import.meta.resolve("npm:@imagemagick/magick-wasm@latest"),
-    ),
-  ),
+      import.meta.resolve("npm:@imagemagick/magick-wasm@latest")
+    )
+  )
 );
 
 const QuerySchema = z.object({
@@ -21,9 +21,7 @@ const QuerySchema = z.object({
   mode: z.enum(["resize", "crop"]).default("resize"),
 });
 
-function parseParams(
-  url: URL,
-): z.infer<typeof QuerySchema> | Response {
+function parseParams(url: URL): z.infer<typeof QuerySchema> | Response {
   const result = QuerySchema.safeParse({
     image: url.searchParams.get("image"),
     width: url.searchParams.get("width") ?? undefined,
@@ -40,7 +38,7 @@ function parseParams(
   if (!width && !height) {
     return new Response(
       "At least one of 'width' or 'height' must be provided.",
-      { status: 400 },
+      { status: 400 }
     );
   }
 
@@ -48,7 +46,7 @@ function parseParams(
 }
 
 async function fetchImage(
-  imageUrl: string,
+  imageUrl: string
 ): Promise<{ buffer: Uint8Array; contentType: string } | Response> {
   let res: globalThis.Response;
   try {
@@ -58,10 +56,9 @@ async function fetchImage(
   }
 
   if (!res.ok) {
-    return new Response(
-      `Upstream returned ${res.status} for the image URL.`,
-      { status: 400 },
-    );
+    return new Response(`Upstream returned ${res.status} for the image URL.`, {
+      status: 400,
+    });
   }
 
   const contentType = res.headers.get("Content-Type") ?? "";
@@ -77,7 +74,7 @@ async function fetchImage(
 
 function processImage(
   buffer: Uint8Array,
-  params: { width?: number; height?: number; mode: "resize" | "crop" },
+  params: { width?: number; height?: number; mode: "resize" | "crop" }
 ): Promise<Uint8Array> {
   const geometry = new MagickGeometry(params.width ?? 0, params.height ?? 0);
   geometry.ignoreAspectRatio = !!params.width && !!params.height;

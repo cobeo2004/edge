@@ -1,1 +1,5 @@
-export { EdgeFunctionServer, type EdgeFunctionServerOptions, newEdgeFunctionServer } from "./EdgeFunctionServer.js";
+export {
+  EdgeFunctionServer,
+  type EdgeFunctionServerOptions,
+  newEdgeFunctionServer,
+} from "./EdgeFunctionServer.js";

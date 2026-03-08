@@ -15,8 +15,16 @@ const DENO_CONFIG = path.resolve(__dirname, "./test/deno_config.json");
 function httpRequest(
   port: number,
   urlPath: string,
-  options: { method?: string; headers?: Record<string, string>; body?: string } = {}
-): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  } = {}
+): Promise<{
+  status: number;
+  headers: http.IncomingHttpHeaders;
+  body: string;
+}> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       `http://127.0.0.1:${port}${urlPath}`,
@@ -46,7 +54,11 @@ function httpRequestRaw(
   port: number,
   urlPath: string,
   options: { method?: string; headers?: Record<string, string> } = {}
-): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+): Promise<{
+  status: number;
+  headers: http.IncomingHttpHeaders;
+  body: Buffer;
+}> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       `http://127.0.0.1:${port}${urlPath}`,
@@ -87,7 +99,13 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
     // start triggers scan
     await server.start();
     const fns = server.listFunctions();
-    expect(fns).toEqual(["echo", "hello", "import-map-test", "npm-import", "wasm-test"]);
+    expect(fns).toEqual([
+      "echo",
+      "hello",
+      "import-map-test",
+      "npm-import",
+      "wasm-test",
+    ]);
   });
 
   it("routes to hello function", async () => {
@@ -197,13 +215,21 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       port,
       eagerSpawn: true,
       importMapPath: IMPORT_MAP,
-      workerOptions: { runFlags: ["--allow-net", "--allow-env", "--allow-read"] },
+      workerOptions: {
+        runFlags: ["--allow-net", "--allow-env", "--allow-read"],
+      },
       onFunctionReady: (name) => readyFunctions.push(name),
     });
     await server.start();
 
     // All functions should have been spawned
-    expect(readyFunctions.sort()).toEqual(["echo", "hello", "import-map-test", "npm-import", "wasm-test"]);
+    expect(readyFunctions.sort()).toEqual([
+      "echo",
+      "hello",
+      "import-map-test",
+      "npm-import",
+      "wasm-test",
+    ]);
   });
 
   it("Deno.serve bootstrap works standalone", async () => {
@@ -247,7 +273,9 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       functionsDir: FUNCTIONS_DIR,
       port,
       importMapPath: IMPORT_MAP,
-      workerOptions: { runFlags: ["--allow-net", "--allow-env", "--allow-read"] },
+      workerOptions: {
+        runFlags: ["--allow-net", "--allow-env", "--allow-read"],
+      },
     });
     await server.start();
     const res = await httpRequest(port, "/import-map-test");
@@ -261,7 +289,9 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       functionsDir: FUNCTIONS_DIR,
       port,
       configPath: DENO_CONFIG,
-      workerOptions: { runFlags: ["--allow-net", "--allow-env", "--allow-read"] },
+      workerOptions: {
+        runFlags: ["--allow-net", "--allow-env", "--allow-read"],
+      },
     });
     await server.start();
     const res = await httpRequest(port, "/import-map-test");
@@ -271,7 +301,12 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
 
   it("logLevel debug with onLog includes function name", async () => {
     const port = 17616;
-    const logs: { functionName: string; level: LogLevel; source: string; message: string }[] = [];
+    const logs: {
+      functionName: string;
+      level: LogLevel;
+      source: string;
+      message: string;
+    }[] = [];
     server = new EdgeFunctionServer({
       functionsDir: FUNCTIONS_DIR,
       port,
@@ -289,7 +324,12 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
     // debug level should capture the spawn command with function name "hello"
     const helloLogs = logs.filter((l) => l.functionName === "hello");
     expect(helloLogs.length).toBeGreaterThan(0);
-    expect(helloLogs.some((l) => l.source === "command" && l.message.includes("Spawning deno process"))).toBe(true);
+    expect(
+      helloLogs.some(
+        (l) =>
+          l.source === "command" && l.message.includes("Spawning deno process")
+      )
+    ).toBe(true);
   });
 
   describe("wasm-test function", { timeout: 30_000 }, () => {
@@ -298,7 +338,9 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       server = new EdgeFunctionServer({
         functionsDir: FUNCTIONS_DIR,
         port,
-        workerOptions: { runFlags: ["--allow-net", "--allow-read", "--allow-env"] },
+        workerOptions: {
+          runFlags: ["--allow-net", "--allow-read", "--allow-env"],
+        },
       });
       await server.start();
       const res = await httpRequest(port, "/wasm-test");
@@ -310,7 +352,9 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       server = new EdgeFunctionServer({
         functionsDir: FUNCTIONS_DIR,
         port,
-        workerOptions: { runFlags: ["--allow-net", "--allow-read", "--allow-env"] },
+        workerOptions: {
+          runFlags: ["--allow-net", "--allow-read", "--allow-env"],
+        },
       });
       await server.start();
       const res = await httpRequest(port, "/wasm-test?width=100");
@@ -322,10 +366,15 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       server = new EdgeFunctionServer({
         functionsDir: FUNCTIONS_DIR,
         port,
-        workerOptions: { runFlags: ["--allow-net", "--allow-read", "--allow-env"] },
+        workerOptions: {
+          runFlags: ["--allow-net", "--allow-read", "--allow-env"],
+        },
       });
       await server.start();
-      const res = await httpRequest(port, "/wasm-test?image=https://example.com/img.png");
+      const res = await httpRequest(
+        port,
+        "/wasm-test?image=https://example.com/img.png"
+      );
       expect(res.status).toBe(400);
       expect(res.body).toContain("width");
     });
@@ -335,10 +384,15 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       server = new EdgeFunctionServer({
         functionsDir: FUNCTIONS_DIR,
         port,
-        workerOptions: { runFlags: ["--allow-net", "--allow-read", "--allow-env"] },
+        workerOptions: {
+          runFlags: ["--allow-net", "--allow-read", "--allow-env"],
+        },
       });
       await server.start();
-      const res = await httpRequest(port, "/wasm-test?image=not-a-url&width=100");
+      const res = await httpRequest(
+        port,
+        "/wasm-test?image=not-a-url&width=100"
+      );
       expect(res.status).toBe(400);
       expect(res.body).toContain("'image' must be a valid URL");
     });
@@ -348,13 +402,18 @@ describe("EdgeFunctionServer", { timeout: 15_000 }, () => {
       server = new EdgeFunctionServer({
         functionsDir: FUNCTIONS_DIR,
         port,
-        workerOptions: { runFlags: ["--allow-net", "--allow-read", "--allow-env"] },
+        workerOptions: {
+          runFlags: ["--allow-net", "--allow-read", "--allow-env"],
+        },
       });
       await server.start();
 
       // Use a small, publicly available test image
       const imageUrl = encodeURIComponent("https://picsum.photos/200/200.jpg");
-      const res = await httpRequestRaw(port, `/wasm-test?image=${imageUrl}&width=50`);
+      const res = await httpRequestRaw(
+        port,
+        `/wasm-test?image=${imageUrl}&width=50`
+      );
       expect(res.status).toBe(200);
       expect(res.headers["content-type"]).toMatch(/^image\//);
       // The response should be non-empty binary data

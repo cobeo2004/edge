@@ -1,5 +1,9 @@
 import { it as _it, beforeAll, describe, expect, test } from "vitest";
-import { type DenoHTTPWorker, type LogLevel, newDenoHTTPWorker } from "./index.js";
+import {
+  type DenoHTTPWorker,
+  type LogLevel,
+  newDenoHTTPWorker,
+} from "./index.js";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -469,7 +473,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   // });
 
   it("importMapPath resolves mapped imports", async () => {
-    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), "deno-import-map-"));
+    const tmpDir = await fsp.mkdtemp(
+      path.join(os.tmpdir(), "deno-import-map-")
+    );
     const importMapPath = path.join(tmpDir, "import_map.json");
     const libPath = path.join(tmpDir, "my_lib.ts");
 
@@ -568,8 +574,16 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       await new Promise((r) => setTimeout(r, 100));
       worker.terminate();
 
-      expect(logs.some((l) => l.source === "stdout" && l.message.includes("stdout-line"))).toBe(true);
-      expect(logs.some((l) => l.source === "stderr" && l.message.includes("stderr-line"))).toBe(true);
+      expect(
+        logs.some(
+          (l) => l.source === "stdout" && l.message.includes("stdout-line")
+        )
+      ).toBe(true);
+      expect(
+        logs.some(
+          (l) => l.source === "stderr" && l.message.includes("stderr-line")
+        )
+      ).toBe(true);
     });
 
     it("logLevel warn captures only stderr via onLog", async () => {
@@ -594,7 +608,11 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       worker.terminate();
 
       expect(logs.some((l) => l.source === "stdout")).toBe(false);
-      expect(logs.some((l) => l.source === "stderr" && l.message.includes("stderr-visible"))).toBe(true);
+      expect(
+        logs.some(
+          (l) => l.source === "stderr" && l.message.includes("stderr-visible")
+        )
+      ).toBe(true);
     });
 
     it("logLevel debug logs spawn command via onLog", async () => {
@@ -615,15 +633,25 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       await jsonRequest(worker, "http://localhost/");
       worker.terminate();
 
-      expect(logs.some((l) => l.source === "command" && l.message.includes("Spawning deno process"))).toBe(true);
+      expect(
+        logs.some(
+          (l) =>
+            l.source === "command" &&
+            l.message.includes("Spawning deno process")
+        )
+      ).toBe(true);
     });
 
     it("printOutput true still works (backward compat)", async () => {
       const logs: string[] = [];
       const origLog = console.log;
       const origErr = console.error;
-      console.log = (...args: any[]) => { logs.push(args.join(" ")); };
-      console.error = (...args: any[]) => { logs.push(args.join(" ")); };
+      console.log = (...args: any[]) => {
+        logs.push(args.join(" "));
+      };
+      console.error = (...args: any[]) => {
+        logs.push(args.join(" "));
+      };
       try {
         const worker = await newDenoHTTPWorker(
           `
@@ -638,7 +666,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         await new Promise((r) => setTimeout(r, 100));
         worker.terminate();
 
-        expect(logs.some((l) => l.includes("[deno]") && l.includes("compat-test"))).toBe(true);
+        expect(
+          logs.some((l) => l.includes("[deno]") && l.includes("compat-test"))
+        ).toBe(true);
       } finally {
         console.log = origLog;
         console.error = origErr;

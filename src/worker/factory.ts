@@ -1,5 +1,5 @@
 import path, { resolve } from "node:path";
-import { spawn, type SpawnOptions } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
 import fs from "node:fs/promises";
@@ -142,16 +142,26 @@ export const newDenoHTTPWorker = async (
         ...scriptArgs,
       ];
       const effectiveLogLevel = resolveLogLevel(_options);
-      const logHandler = _options.onLog ?? ((level: LogLevel, source: "stdout" | "stderr" | "command", message: string) => {
-        if (source === "stderr") {
-          console.error("[deno]", message);
-        } else {
-          console.log("[deno]", message);
-        }
-      });
+      const logHandler =
+        _options.onLog ??
+        ((
+          _level: LogLevel,
+          source: "stdout" | "stderr" | "command",
+          message: string
+        ) => {
+          if (source === "stderr") {
+            console.error("[deno]", message);
+          } else {
+            console.log("[deno]", message);
+          }
+        });
 
       if (shouldLog(effectiveLogLevel, "debug")) {
-        logHandler("debug", "command", `Spawning deno process: ${JSON.stringify([command, ...args])}`);
+        logHandler(
+          "debug",
+          "command",
+          `Spawning deno process: ${JSON.stringify([command, ...args])}`
+        );
       }
 
       const process = _options.spawnFunc(command, args, _options.spawnOptions);
