@@ -32,14 +32,6 @@ const server = new EdgeFunctionServer({
 await server.start();
 console.log("EdgeFunctionServer listening on http://127.0.0.1:3000");
 console.log("Available functions:", server.listFunctions().join(", "));
-console.log();
-console.log("Try:");
-console.log("  curl http://127.0.0.1:3000/hello");
-console.log("  curl http://127.0.0.1:3000/echo/some/path?q=1");
-console.log("  curl http://127.0.0.1:3000/local-import-map?name=Deno");
-console.log(
-  "  curl http://127.0.0.1:3000/wasm-test?image=https://deno.land/logo.svg"
-);
 
 // Keep the server running until interrupted
 process.on("SIGINT", async () => {
