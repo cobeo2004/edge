@@ -20,17 +20,14 @@ Make `@cobeo2004/edge` a production-grade, self-hosted Deno edge function runtim
 
 ### Multi-Runtime Server Adapters
 
-**Status:** Not started
+**Status:** Done
 
-`EdgeFunctionServer` is currently built on `node:http` and can only run on Node.js. Users on Bun or Deno cannot use the server component natively — they must run it through Node.js compatibility layers, missing out on runtime-specific performance and APIs.
-
-**Planned:**
-- Adapter abstraction layer — decouple `EdgeFunctionServer` from `node:http` behind a common interface (`createServer`, `listen`, `close`, request/response mapping)
-- `node` adapter (current behavior, default)
-- `bun` adapter — use `Bun.serve()` for the host server, leveraging Bun's faster HTTP handling
-- `deno` adapter — use `Deno.serve()` for the host server
-- Auto-detect runtime and select adapter automatically, with manual override via `adapter` option
-- Ensure all adapters support the full feature set (streaming, headers, status codes, error handling)
+`EdgeFunctionServer` is decoupled from `node:http` behind a `ServerAdapter` interface using web standard `Request`/`Response`. Three adapters are provided:
+- `node` adapter (default) — wraps `http.createServer` with web ↔ node:http conversion
+- `bun` adapter — wraps `Bun.serve()` for native Bun HTTP handling
+- `deno` adapter — wraps `Deno.serve()` for native Deno HTTP handling
+- Runtime auto-detection selects the appropriate adapter, with manual override via `adapter` option on `EdgeFunctionServerOptions`
+- All adapter types (`ServerAdapter`, `AdapterServer`, `RequestHandler`, `RuntimeName`) are exported from the package
 
 ### Environment Variables & Secrets Management
 
