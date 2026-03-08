@@ -1,0 +1,210 @@
+# Roadmap — Supabase Edge Functions Feature Parity
+
+> This document tracks planned features for `@cobeo2004/edge` to reach feature parity with [Supabase Edge Functions](https://supabase.com/docs/guides/functions) and beyond.
+
+## Vision
+
+Make `@cobeo2004/edge` a production-grade, self-hosted Deno edge function runtime — offering the same developer experience and operational guarantees as Supabase Edge Functions, while remaining framework-agnostic, runtime-agnostic, and easy to embed.
+
+## Current Capabilities
+
+- Spawn isolated Deno HTTP workers from Node.js over Unix sockets
+- `EdgeFunctionServer` with per-function routing (`/:functionName/*`), lazy/eager spawning, hot reload
+- Import maps and `deno.json` config support
+- Configurable log levels with custom handlers
+- Graceful shutdown and auto-respawn on worker exit
+
+---
+
+## Phase 1 — Core Infrastructure (High Priority)
+
+### Multi-Runtime Server Adapters
+
+**Status:** Not started
+
+`EdgeFunctionServer` is currently built on `node:http` and can only run on Node.js. Users on Bun or Deno cannot use the server component natively — they must run it through Node.js compatibility layers, missing out on runtime-specific performance and APIs.
+
+**Planned:**
+- Adapter abstraction layer — decouple `EdgeFunctionServer` from `node:http` behind a common interface (`createServer`, `listen`, `close`, request/response mapping)
+- `node` adapter (current behavior, default)
+- `bun` adapter — use `Bun.serve()` for the host server, leveraging Bun's faster HTTP handling
+- `deno` adapter — use `Deno.serve()` for the host server
+- Auto-detect runtime and select adapter automatically, with manual override via `adapter` option
+- Ensure all adapters support the full feature set (streaming, headers, status codes, error handling)
+
+### Environment Variables & Secrets Management
+
+**Status:** Not started
+
+Supabase automatically loads `.env` files and provides a secrets management layer (`supabase secrets set`). Currently, `@cobeo2004/edge` has no built-in env var handling — users must pass `--allow-env` and manage variables manually via `spawnOptions.env`.
+
+**Planned:**
+- Per-function `.env` file loading (auto-discover `functions/<name>/.env`)
+- Global `.env` support at the functions directory root
+- Programmatic API to set/override env vars per worker
+- Secret masking in log output
+
+### Execution Limits
+
+**Status:** Not started
+
+Supabase enforces CPU time limits (50 ms default, configurable), memory caps, and request-level timeouts. This project has no resource limits — a runaway function can consume unbounded resources.
+
+**Planned:**
+- Configurable request timeout (kill worker if exceeded)
+- Wall-clock execution limit per invocation
+- Memory limit via Deno's `--v8-flags=--max-old-space-size`
+- Expose resource usage stats per request
+
+### Request Timeout & Health Checks
+
+**Status:** Not started
+
+No mechanism to detect or recover from hung workers beyond process exit.
+
+**Planned:**
+- Per-request timeout with automatic 504 response
+- Periodic health-check pings to workers
+- Auto-restart unhealthy workers
+
+---
+
+## Phase 2 — Security & Auth (Medium Priority)
+
+### JWT Verification Middleware
+
+**Status:** Not started
+
+Supabase validates JWTs on every request by default (using the project's JWT secret). This project has no auth layer.
+
+**Planned:**
+- Optional JWT verification middleware in `EdgeFunctionServer`
+- Configurable JWT secret / JWKS endpoint
+- Pass decoded claims to function via request headers
+- Allow per-function opt-out (e.g., for public endpoints)
+
+### Permission Sandboxing Profiles
+
+**Status:** Partial — users can pass `runFlags` manually
+
+Supabase runs functions with a strict default permission set. This project defaults to `--allow-net --allow-env` but leaves full control to the user.
+
+**Planned:**
+- Named permission profiles (e.g., `"strict"`, `"standard"`, `"permissive"`)
+- Per-function permission overrides
+- Document recommended production permission sets
+
+---
+
+## Phase 3 — Performance & Scaling (Medium Priority)
+
+### Worker Pool / Concurrency
+
+**Status:** Not started
+
+Supabase can run multiple isolates per function to handle concurrent requests. This project spawns exactly one Deno process per function — concurrent requests queue behind a single worker.
+
+**Planned:**
+- Configurable worker pool size per function
+- Round-robin or least-connections request routing
+- Auto-scaling based on queue depth or response latency
+- Idle worker recycling
+
+### WebSocket Support
+
+**Status:** Not started
+
+Supabase recently added WebSocket support for edge functions. The current Unix-socket HTTP/1.1 proxy does not handle WebSocket upgrades.
+
+**Planned:**
+- Detect and proxy `Upgrade: websocket` requests
+- Bidirectional frame forwarding over the Unix socket
+- Connection lifecycle management (ping/pong, close)
+
+### Background Tasks
+
+**Status:** Not started
+
+Supabase supports long-running background tasks that outlive the HTTP response (e.g., `EdgeRuntime.waitUntil()`).
+
+**Planned:**
+- `waitUntil`-style API in the bootstrap layer
+- Track in-flight background tasks per worker
+- Graceful shutdown waits for background tasks to complete
+- Configurable background task timeout
+
+---
+
+## Phase 4 — Developer Experience (Lower Priority)
+
+### CLI Tooling
+
+**Status:** Not started
+
+Supabase provides `supabase functions serve`, `supabase functions deploy`, and `supabase functions new`. This project is library-only.
+
+**Planned:**
+- `edge serve` — start the dev server with hot reload
+- `edge new <name>` — scaffold a new function from template
+- `edge list` — list discovered functions and their status
+- `edge logs <name>` — tail function logs
+
+### Metrics & Observability
+
+**Status:** Not started
+
+No built-in metrics. Users must instrument manually.
+
+**Planned:**
+- Request count, latency (p50/p95/p99), error rate per function
+- Worker lifecycle events (spawn, ready, exit, restart)
+- Pluggable metrics backend (console, Prometheus, OpenTelemetry)
+- Optional `/metrics` endpoint on the server
+
+### Improved Error Reporting
+
+**Status:** Partial — `onFunctionError` callback exists
+
+**Planned:**
+- Structured error responses with stack traces (dev mode only)
+- Source-map support for transpiled function code
+- Error categorization (timeout, OOM, user error, infrastructure)
+
+---
+
+## Phase 5 — Advanced Features (Longer-term)
+
+### Ephemeral File Storage
+
+**Status:** Not started
+
+Supabase provides temporary file storage scoped to function execution. Currently, functions write to the host filesystem with whatever permissions are granted.
+
+**Planned:**
+- Scoped temp directory per function invocation
+- Automatic cleanup after request completes
+- Configurable size limit
+
+### Multi-Worker Deployment Topologies
+
+**Status:** Not started
+
+**Planned:**
+- Support running `EdgeFunctionServer` across multiple Node.js processes (cluster mode)
+- Shared worker registry backed by IPC or Redis
+- Sticky routing for stateful functions
+
+### Custom Middleware Pipeline
+
+**Status:** Not started
+
+**Planned:**
+- Hook into the request/response lifecycle (before/after function execution)
+- Built-in middleware: CORS, rate limiting, request logging, body size limits
+- Composable middleware chain per function or globally
+
+---
+
+## Contributing
+
+Contributions toward any roadmap item are welcome. Please open an issue to discuss the approach before submitting a PR for larger features.
