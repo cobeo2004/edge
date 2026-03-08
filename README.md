@@ -1,43 +1,269 @@
-# deno-http-worker
+# @cobeo2004/edge
 
-[![NPM version](https://img.shields.io/npm/v/deno-http-worker.svg?style=flat)](https://npmjs.org/package/deno-http-worker)
+[![NPM version](https://img.shields.io/npm/v/@cobeo2004/edge.svg?style=flat)](https://npmjs.org/package/@cobeo2004/edge)
 
-Similarly to [deno-vm](https://github.com/casual-simulation/node-deno-vm), deno-http-worker lets you securely spawn Deno http servers.
+Securely spawn Deno HTTP workers from Node.js over Unix sockets.
 
-## Usage
+> **Forked from [@valtown/deno-http-worker](https://github.com/val-town/deno-http-worker).**
+> Full credit to [Val Town](https://val.town) for the original design and implementation.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Node.js Process
+        A[newDenoHTTPWorker] -->|spawns| B[Deno child process]
+        A -->|polls for socket| C[Unix Socket]
+        A -->|warm request| D[Worker ready]
+        D --> E["worker.request()"]
+        E -->|"HTTP/1 over Unix socket"| C
+    end
+
+    subgraph Deno Process
+        C --> F["deno-bootstrap/serve.ts"]
+        F -->|intercepts Deno.serve| G[Import user module]
+        G --> H["User fetch() handler"]
+    end
+
+    style C fill:#f9f,stroke:#333
+```
+
+### How communication works
+
+All traffic between Node.js and Deno flows over a **Unix domain socket** using HTTP/1.1 with keep-alive. The bootstrap script rewrites requests using custom headers:
+
+| Header                     | Purpose                                                             |
+| -------------------------- | ------------------------------------------------------------------- |
+| `X-Deno-Worker-URL`        | Carries the original request URL (since the socket has no hostname) |
+| `X-Deno-Worker-Host`       | Preserves the original `Host` header                                |
+| `X-Deno-Worker-Connection` | Preserves the original `Connection` header                          |
+
+The Deno-side bootstrap (`deno-bootstrap/serve.ts`) intercepts `Deno.serve()` calls from user code, extracts the handler, and re-serves it on the Unix socket with header rewriting applied.
+
+### EdgeFunctionServer flow
+
+```mermaid
+flowchart TD
+    A[HTTP Request] --> B[EdgeFunctionServer]
+    B -->|"parse /:functionName/*"| C{Function exists?}
+    C -->|No| D[404 Not Found]
+    C -->|Yes| E[Get or spawn worker]
+    E -->|lazy spawn| F[newDenoHTTPWorker]
+    F --> G[Proxy request to worker]
+    G -->|strip function prefix| H[Deno worker handles request]
+    H --> I[Response piped back]
+```
+
+## Installation
+
+**Prerequisites:** [Deno](https://deno.com) must be installed and available on `PATH`.
+
+```bash
+npm install @cobeo2004/deno-http-worker
+```
+
+## Quick Start
 
 ```ts
-import { newDenoHTTPWorker } from 'deno-http-worker';
+import { newDenoHTTPWorker } from "@cobeo2004/deno-http-worker";
 
-let worker = await newDenoHTTPWorker(
-    `export default {
-        async fetch(req: Request): Promise<Response> {
-            return Response.json({ ok: req.url });
-        },
-    }`,
-    { printOutput: true, runFlags: ["--allow-net"] }
+const worker = await newDenoHTTPWorker(
+  `export default {
+    async fetch(req: Request): Promise<Response> {
+      return Response.json({ ok: req.url });
+    },
+  }`,
+  { printOutput: true, runFlags: ["--allow-net"] },
 );
 
 const body = await new Promise((resolve, reject) => {
-    const req = worker.request("https://hello/world?query=param", {}, (resp) => {
-        const body = [];
-        resp.on("error", reject);
-        resp.on("data", (chunk) => {
-            body.push(chunk);
-        });
-        resp.on("end", () => {
-            resolve(Buffer.concat(body).toString());
-        });
-    })
-    req.end();
-})
-console.log(body) // => {"ok":"https://hello/world?query=param"}
+  const req = worker.request("https://hello/world?query=param", {}, (resp) => {
+    const body: Buffer[] = [];
+    resp.on("error", reject);
+    resp.on("data", (chunk) => body.push(chunk));
+    resp.on("end", () => resolve(Buffer.concat(body).toString()));
+  });
+  req.end();
+});
+
+console.log(body); // => {"ok":"https://hello/world?query=param"}
 
 worker.terminate();
 ```
 
-## Internals
+You can also pass a `file://` or `https://` URL to load a module instead of inline code:
 
-Deno-http-worker connects to the Deno process over a Unix socket to make requests.  As a result, the worker does not provide an address or url, but instead returns `request` function that calls `http.request` under the hood, but modifies the request attributes to work over the socket.
+```ts
+const worker = await newDenoHTTPWorker(new URL("file:///path/to/handler.ts"), {
+  runFlags: ["--allow-net"],
+});
+```
 
-If you need more advanced usage here, or run into bugs, please open an issue.
+## EdgeFunctionServer
+
+`EdgeFunctionServer` is an HTTP server that routes requests to per-function Deno workers. Each subdirectory under `functionsDir` is a separate function, identified by its folder name.
+
+```
+functions/
+├── hello/
+│   └── index.ts
+└── greet/
+    └── index.ts
+```
+
+Each function must have an entrypoint file (`index.ts`, `index.tsx`, `index.js`, or `index.mjs`) that calls `Deno.serve()`.
+
+```ts
+import { newEdgeFunctionServer } from "@cobeo2004/deno-http-worker";
+
+const server = newEdgeFunctionServer({
+  functionsDir: "/absolute/path/to/functions",
+  port: 3000,
+  eagerSpawn: true, // spawn all workers at startup
+  hotReload: true, // watch for file changes & restart workers
+  workerOptions: {
+    runFlags: ["--allow-net", "--allow-env"],
+  },
+  onFunctionReady: (name) => console.log(`${name} is ready`),
+  onFunctionError: (name, err) => console.error(`${name} error:`, err),
+});
+
+await server.start();
+
+// Requests are routed by the first path segment:
+// GET http://localhost:3000/hello/world  → hello function, path: /world
+// GET http://localhost:3000/greet        → greet function, path: /
+
+// Graceful shutdown
+await server.stop();
+```
+
+## Configuration
+
+All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
+
+| Option                     | Type                               | Description                                                                              |
+| -------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| `runFlags`                 | `string[]`                         | Deno permission flags (e.g. `["--allow-net"]`)                                           |
+| `importMapPath`            | `string`                           | Path to an import map JSON file                                                          |
+| `configPath`               | `string`                           | Path to a `deno.json` config file                                                        |
+| `denoExecutable`           | `string \| string[]`               | Path to the Deno binary (default: `"deno"`)                                              |
+| `logLevel`                 | `LogLevel`                         | Logging verbosity: `"debug"`, `"info"`, `"warn"`, `"error"`, `"silent"` (default)        |
+| `onLog`                    | `(level, source, message) => void` | Custom log handler (default: `console.log`/`console.error` with `[deno]` prefix)         |
+| `printOutput`              | `boolean`                          | Print Deno stdout/stderr with `[deno]` prefix (legacy, equivalent to `logLevel: "info"`) |
+| `printCommandAndArguments` | `boolean`                          | Log the spawned command for debugging (legacy, equivalent to `logLevel: "debug"`)        |
+| `spawnOptions`             | `SpawnOptions`                     | Options passed to `child_process.spawn`                                                  |
+| `denoBootstrapScriptPath`  | `string`                           | Custom bootstrap script (advanced)                                                       |
+
+`EdgeFunctionServerOptions` additionally supports:
+
+| Option          | Type                                             | Description                                                                      |
+| --------------- | ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `functionsDir`  | `string`                                         | Absolute path to the functions directory                                         |
+| `port`          | `number`                                         | Port to listen on                                                                |
+| `hostname`      | `string`                                         | Hostname to bind to (default: `"127.0.0.1"`)                                     |
+| `eagerSpawn`    | `boolean`                                        | Spawn all workers at startup (default: `false`)                                  |
+| `hotReload`     | `boolean`                                        | Watch & restart on file changes (default: `false`)                               |
+| `workerOptions` | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                 |
+| `logLevel`      | `LogLevel`                                       | Log level for all function workers (default: `"silent"`)                         |
+| `onLog`         | `(functionName, level, source, message) => void` | Custom log handler with function name context (default: `[deno:${name}]` prefix) |
+
+## Logging
+
+Control worker output verbosity with `logLevel` and optionally route logs through a custom `onLog` handler.
+
+### Log levels
+
+| Level      | What is logged                  |
+| ---------- | ------------------------------- |
+| `"debug"`  | Spawn command + stdout + stderr |
+| `"info"`   | stdout + stderr                 |
+| `"warn"`   | stderr only                     |
+| `"error"`  | Only early-exit/crash output    |
+| `"silent"` | Nothing (default)               |
+
+### Custom log handler
+
+```ts
+const worker = await newDenoHTTPWorker(script, {
+  logLevel: "info",
+  onLog: (level, source, message) => {
+    // level: "debug" | "info" | "warn" | "error"
+    // source: "stdout" | "stderr" | "command"
+    myLogger[level](`[worker:${source}] ${message}`);
+  },
+});
+```
+
+### EdgeFunctionServer logging
+
+The server-level `onLog` callback includes the function name so you can distinguish output from different workers:
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  logLevel: "info",
+  onLog: (functionName, level, source, message) => {
+    console.log(`[${functionName}:${source}] ${message}`);
+  },
+});
+```
+
+### Backward compatibility
+
+The legacy `printOutput` and `printCommandAndArguments` booleans still work. When `logLevel` is not set:
+
+- `printOutput: true` resolves to `logLevel: "info"`
+- `printCommandAndArguments: true` resolves to `logLevel: "debug"`
+
+An explicit `logLevel` takes precedence over both booleans.
+
+## Import Maps
+
+You can pass an [import map](https://docs.deno.com/runtime/fundamentals/configuration/#an-import-map) to the worker with the `importMapPath` option. The import map file is automatically added to `--allow-read` permissions.
+
+```json
+{
+  "imports": {
+    "lodash/": "https://esm.sh/lodash-es/"
+  }
+}
+```
+
+```ts
+const worker = await newDenoHTTPWorker(
+  `import capitalize from "lodash/capitalize";
+  export default {
+    async fetch(req: Request): Promise<Response> {
+      return Response.json({ message: capitalize("hello world") });
+    },
+  }`,
+  {
+    importMapPath: "./import_map.json",
+    runFlags: ["--allow-net"],
+  },
+);
+```
+
+Alternatively, use `configPath` to point to a full `deno.json` which supports `imports`, `nodeModulesDir`, `compilerOptions`, and more.
+
+## API Reference
+
+### Exports
+
+| Export                              | Kind     | Description                                                   |
+| ----------------------------------- | -------- | ------------------------------------------------------------- |
+| `newDenoHTTPWorker(code, options?)` | Function | Spawn a Deno worker from inline code or a URL                 |
+| `newEdgeFunctionServer(options)`    | Function | Create an `EdgeFunctionServer` instance                       |
+| `DenoHTTPWorker`                    | Type     | Worker instance with `request()`, `terminate()`, `shutdown()` |
+| `EdgeFunctionServer`                | Class    | HTTP server routing to per-function Deno workers              |
+| `DenoWorkerOptions`                 | Type     | Options for `newDenoHTTPWorker`                               |
+| `EdgeFunctionServerOptions`         | Type     | Options for `EdgeFunctionServer`                              |
+| `LogLevel`                          | Type     | `"debug" \| "info" \| "warn" \| "error" \| "silent"`          |
+| `EarlyExitDenoHTTPWorkerError`      | Class    | Error thrown when the Deno process exits unexpectedly         |
+| `MinimalChildProcess`               | Type     | Interface for the spawned child process                       |
+
+## License
+
+MIT
