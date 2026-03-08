@@ -3,4 +3,6 @@ node_modules
 dist
 *.tsbuildinfo
 .npmrc
-.claude
+.claude/
+skills-lock.json
+.agents/
