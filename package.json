@@ -1,6 +1,6 @@
 {
-  "name": "@valtown/deno-http-worker",
-  "version": "2.0.1",
+  "name": "@cobeo2004/edge",
+  "version": "0.0.1",
   "description": "Securely spawn Deno workers from Node.js",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/val-town/deno-http-worker.git"
+    "url": "git+https://github.com/cobeo2004/edge.git"
   },
   "type": "module",
   "engines": {
@@ -28,9 +28,9 @@
   "author": "Val Town",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/val-town/deno-http-worker/issues"
+    "url": "https://github.com/cobeo2004/edge/issues"
   },
-  "homepage": "https://github.com/val-town/deno-http-worker#readme",
+  "homepage": "https://github.com/cobeo2004/edge#readme",
   "devDependencies": {
     "@biomejs/biome": "^2.1.4",
     "@changesets/cli": "^2.29.8",
