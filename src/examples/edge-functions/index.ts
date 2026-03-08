@@ -19,6 +19,9 @@ const server = new EdgeFunctionServer({
   adapter: "bun",
   configPath: path.join(FUNCTIONS_DIR, "deno.json"),
   logLevel: "debug",
+  env: {
+    AT_VAR: "at_value",
+  },
   onLog: (functionName, level, source, message) => {
     console.log(`  [${functionName}] ${level} ${source} ${message}`);
   },

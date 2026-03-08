@@ -8,6 +8,7 @@ import {
   type LogLevel,
   newDenoHTTPWorker,
 } from "../worker/index.js";
+import { loadEnvFile, createSecretMasker } from "../env/index.js";
 import type { AdapterServer, ServerAdapter } from "./adapters/types.js";
 import type { RuntimeName } from "./adapters/detect.js";
 import { resolveAdapter } from "./adapters/detect.js";
@@ -54,6 +55,12 @@ export interface EdgeFunctionServerOptions {
     source: "stdout" | "stderr" | "command",
     message: string
   ) => void;
+  /** Environment variables applied to all workers */
+  env?: Record<string, string>;
+  /** Additional .env file paths loaded at start() */
+  envFiles?: string[];
+  /** Mask secret values in log output. Defaults to true */
+  maskSecrets?: boolean;
 }
 
 export class EdgeFunctionServer {
@@ -64,6 +71,8 @@ export class EdgeFunctionServer {
   #server: AdapterServer | undefined;
   #watcher: fs.FSWatcher | undefined;
   #debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #envBase: Record<string, string> = {};
+  #secretValues: string[] = [];
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -71,6 +80,7 @@ export class EdgeFunctionServer {
 
   async start(): Promise<void> {
     await this.#scanFunctions();
+    await this.#loadEnv();
 
     const adapter = await resolveAdapter(this.#options.adapter);
     this.#server = adapter.createServer((request) =>
@@ -139,6 +149,34 @@ export class EdgeFunctionServer {
     this.#workerPromises.delete(name);
     if (this.#functions.has(name)) {
       await this.#getOrCreateWorker(name);
+    }
+  }
+
+  async #loadEnv(): Promise<void> {
+    // Layer 2: global .env
+    const globalEnv = await loadEnvFile(
+      path.join(this.#options.functionsDir, ".env")
+    );
+
+    // Layer 3: additional envFiles
+    let envFilesEnv: Record<string, string> = {};
+    if (this.#options.envFiles) {
+      for (const filePath of this.#options.envFiles) {
+        const loaded = await loadEnvFile(filePath);
+        envFilesEnv = { ...envFilesEnv, ...loaded };
+      }
+    }
+
+    // Layer 4: programmatic env
+    this.#envBase = {
+      ...globalEnv,
+      ...envFilesEnv,
+      ...(this.#options.env ?? {}),
+    };
+
+    // Collect secret values for masking
+    if (this.#options.maskSecrets !== false) {
+      this.#secretValues = Object.values(this.#envBase);
     }
   }
 
@@ -308,6 +346,27 @@ export class EdgeFunctionServer {
     const defaultRunFlags = ["--allow-net", "--allow-env"];
     const runFlags = userOptions.runFlags ?? defaultRunFlags;
 
+    // Layer 5: per-function .env
+    const functionDir = path.dirname(entrypoint);
+    const perFunctionEnv = await loadEnvFile(path.join(functionDir, ".env"));
+
+    // Merge all layers: base (global + envFiles + programmatic) → per-function → workerOptions.env
+    const mergedEnv: Record<string, string> = {
+      ...this.#envBase,
+      ...perFunctionEnv,
+      ...(userOptions.env ?? {}),
+    };
+
+    // Collect per-function secrets for masking
+    let secretValues = this.#secretValues;
+    if (this.#options.maskSecrets !== false) {
+      const perFunctionSecrets = Object.values(perFunctionEnv);
+      const workerSecrets = userOptions.env
+        ? Object.values(userOptions.env)
+        : [];
+      secretValues = [...secretValues, ...perFunctionSecrets, ...workerSecrets];
+    }
+
     const logLevel =
       this.#options.logLevel ?? userOptions.logLevel ?? undefined;
     let onLog = userOptions.onLog;
@@ -326,6 +385,14 @@ export class EdgeFunctionServer {
       };
     }
 
+    // Wrap onLog with secret masker
+    if (this.#options.maskSecrets !== false && onLog) {
+      const mask = createSecretMasker(secretValues);
+      const originalOnLog = onLog;
+      onLog = (level, source, message) =>
+        originalOnLog(level, source, mask(message));
+    }
+
     return newDenoHTTPWorker(new URL(`file://${entrypoint}`), {
       ...userOptions,
       denoBootstrapScriptPath:
@@ -333,6 +400,7 @@ export class EdgeFunctionServer {
       runFlags,
       importMapPath: this.#options.importMapPath ?? userOptions.importMapPath,
       configPath: this.#options.configPath ?? userOptions.configPath,
+      env: mergedEnv,
       ...(logLevel ? { logLevel } : {}),
       ...(onLog ? { onLog } : {}),
     });

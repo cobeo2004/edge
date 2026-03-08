@@ -135,4 +135,11 @@ export interface DenoWorkerOptions {
    * passed to Deno (Deno will merge them).
    */
   configPath?: string;
+
+  /**
+   * Environment variables to pass to the Deno worker process.
+   * These are merged on top of `process.env` and any env set via
+   * `spawnOptions.env`.
+   */
+  env?: Record<string, string>;
 }

@@ -69,6 +69,15 @@ export const newDenoHTTPWorker = async (
       ? socketFile
       : `${socketFile},${fileURLToPath(script)}`;
 
+  // Merge env layers: process.env → spawnOptions.env → options.env
+  if (_options.env) {
+    const baseEnv = _options.spawnOptions.env ?? process.env;
+    _options.spawnOptions = {
+      ..._options.spawnOptions,
+      env: { ...baseEnv, ..._options.env },
+    };
+  }
+
   if (_options.importMapPath) {
     allowReadFlagValue += `,${_options.importMapPath}`;
   }
