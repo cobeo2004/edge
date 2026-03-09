@@ -103,6 +103,7 @@ export class EdgeFunctionServer {
   #restartCounts = new Map<string, number>();
   #healthCheckTimers = new Map<string, ReturnType<typeof setInterval>>();
   #healthCheckFailures = new Map<string, number>();
+  #healthCheckInFlight = new Set<string>();
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -309,16 +310,23 @@ export class EdgeFunctionServer {
               }
             }
           }
-          const emitStats = () =>
-            this.#emitStats(functionName, startTime, statusCode, false);
+          let statsEmitted = false;
+          const emitStats = (status: number, timedOut: boolean) => {
+            if (statsEmitted) return;
+            statsEmitted = true;
+            this.#emitStats(functionName, startTime, status, timedOut);
+          };
           const body = new ReadableStream({
             start(controller) {
               proxyRes.on("data", (chunk: Buffer) => controller.enqueue(chunk));
               proxyRes.on("end", () => {
                 controller.close();
-                emitStats();
+                emitStats(statusCode, false);
               });
-              proxyRes.on("error", (err) => controller.error(err));
+              proxyRes.on("error", (err) => {
+                emitStats(statusCode, false);
+                controller.error(err);
+              });
             },
           });
           resolve(
@@ -332,7 +340,7 @@ export class EdgeFunctionServer {
 
       proxyReq.on("error", (err) => {
         this.#options.onFunctionError?.(functionName, err);
-        const timedOut = err.message.includes("timed out");
+        const timedOut = (err as any).code === "ERR_REQUEST_TIMEOUT";
         const status = timedOut ? 504 : 502;
         const errorMsg = timedOut
           ? "Request timed out"
@@ -421,11 +429,18 @@ export class EdgeFunctionServer {
     const timer = setInterval(async () => {
       // Skip if this worker has been replaced
       if (this.#workers.get(name) !== worker) return;
+      // Skip if a health check is already in-flight for this worker
+      if (this.#healthCheckInFlight.has(name)) return;
+      this.#healthCheckInFlight.add(name);
 
+      let req: ReturnType<DenoHTTPWorker["request"]> | undefined;
       const healthy = await new Promise<boolean>((resolve) => {
-        const timeoutId = setTimeout(() => resolve(false), config.timeout);
+        const timeoutId = setTimeout(() => {
+          req?.destroy();
+          resolve(false);
+        }, config.timeout);
         try {
-          const req = worker.request(
+          req = worker.request(
             "http://deno/__health",
             { method: "GET" },
             (res) => {
@@ -450,6 +465,8 @@ export class EdgeFunctionServer {
           resolve(false);
         }
       });
+
+      this.#healthCheckInFlight.delete(name);
 
       // Worker might have been replaced while the health check was in-flight
       if (this.#workers.get(name) !== worker) return;
@@ -610,15 +627,12 @@ export class EdgeFunctionServer {
       env: mergedEnv,
       ...(logLevel ? { logLevel } : {}),
       ...(onLog ? { onLog } : {}),
-      ...(this.#options.memoryLimitMb
-        ? { memoryLimitMb: this.#options.memoryLimitMb }
-        : {}),
-      ...(this.#options.requestTimeout
-        ? { requestTimeout: this.#options.requestTimeout }
-        : {}),
-      ...(this.#options.workerMaxDuration
-        ? { workerMaxDuration: this.#options.workerMaxDuration }
-        : {}),
+      memoryLimitMb:
+        userOptions.memoryLimitMb ?? this.#options.memoryLimitMb,
+      requestTimeout:
+        userOptions.requestTimeout ?? this.#options.requestTimeout,
+      workerMaxDuration:
+        userOptions.workerMaxDuration ?? this.#options.workerMaxDuration,
     });
   }
 

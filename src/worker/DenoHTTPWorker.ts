@@ -67,7 +67,7 @@ export class DenoHTTPWorkerImpl {
     this.#requestTimeout = opts.requestTimeout;
     this.#agent = new http.Agent({ keepAlive: true });
 
-    if (opts.workerMaxDuration) {
+    if (opts.workerMaxDuration != null) {
       this.#maxDurationTimer = setTimeout(() => {
         this._terminate();
       }, opts.workerMaxDuration);
@@ -131,10 +131,12 @@ export class DenoHTTPWorkerImpl {
     options.agent = this.#agent;
     options.socketPath = this.#socketFile;
     const req = http.request(url, options, callback);
-    if (this.#requestTimeout) {
+    if (this.#requestTimeout != null) {
       const timeout = this.#requestTimeout;
       req.setTimeout(timeout, () => {
-        req.destroy(new Error(`Request timed out after ${timeout}ms`));
+        const err = new Error(`Request timed out after ${timeout}ms`);
+        (err as any).code = "ERR_REQUEST_TIMEOUT";
+        req.destroy(err);
       });
     }
     return req;

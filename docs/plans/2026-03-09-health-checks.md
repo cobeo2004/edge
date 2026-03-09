@@ -1,7 +1,5 @@
 # Health Checks Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Add periodic HTTP health-check pings to workers with auto-restart of unhealthy workers.
 
 **Architecture:** `EdgeFunctionServer` manages per-worker health check timers. Each tick sends an HTTP GET to the worker's Unix socket. After N consecutive failures, the worker is terminated and immediately respawned. Config lives on both `DenoWorkerOptions` (carried as data) and `EdgeFunctionServerOptions` (server reads it and runs checks).

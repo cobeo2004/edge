@@ -64,29 +64,25 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
   it("requestTimeout: slow request times out but worker survives", async () => {
     const worker = await newDenoHTTPWorker(
       `export default { async fetch(req: Request): Promise<Response> {
-          await new Promise(r => setTimeout(r, 5000));
-          return Response.json({ ok: true });
+          const url = new URL(req.url);
+          if (url.pathname === "/slow") {
+            await new Promise(r => setTimeout(r, 5000));
+          }
+          return Response.json({ alive: true });
         }}`,
       { requestTimeout: 200 }
     );
 
     // First request should time out
-    await expect(jsonRequest(worker, "https://localhost/test")).rejects.toThrow(
-      "timed out"
-    );
+    await expect(
+      jsonRequest(worker, "https://localhost/slow")
+    ).rejects.toThrow("timed out");
 
     // Worker should still be alive — a fast request should succeed
-    const worker2 = await newDenoHTTPWorker(
-      `export default { async fetch(req: Request): Promise<Response> {
-          return Response.json({ alive: true });
-        }}`,
-      {}
-    );
-    const json = await jsonRequest(worker2, "https://localhost/test");
+    const json = await jsonRequest(worker, "https://localhost/fast");
     expect(json).toEqual({ alive: true });
 
     worker.terminate();
-    worker2.terminate();
   });
 
   it("workerMaxDuration: worker auto-terminates after duration", async () => {

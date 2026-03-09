@@ -29,7 +29,7 @@ export default async function (req: Request): Promise<Response> {
       }
       return handler(req);
     } catch (e) {
-      return new Response(e as BodyInit, { status: 500 });
+      return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
     }
   }
   return handler(req);

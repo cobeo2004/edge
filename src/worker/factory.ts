@@ -117,7 +117,13 @@ export const newDenoHTTPWorker = async (
   }
 
   // Inject V8 memory limit flag
-  if (_options.memoryLimitMb) {
+  if (_options.memoryLimitMb != null) {
+    if (
+      !Number.isInteger(_options.memoryLimitMb) ||
+      _options.memoryLimitMb <= 0
+    ) {
+      throw new Error("memoryLimitMb must be a positive integer");
+    }
     const maxOldSpaceFlag = `--max-old-space-size=${_options.memoryLimitMb}`;
     const existingIdx = _options.runFlags.findIndex((f) =>
       f.startsWith("--v8-flags=")
