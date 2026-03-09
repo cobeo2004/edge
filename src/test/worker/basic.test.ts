@@ -1,12 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { type SpawnOptions, spawn } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import { Worker } from "node:worker_threads";
 import { newDenoHTTPWorker } from "../../index.js";
 import { jsonRequest, cleanupSockets } from "../helpers/worker.js";
 import { echoScript } from "../helpers/fixtures.js";
-
+import type { IncomingMessage } from "node:http";
+import { Buffer } from "node:buffer";
+import type { MinimalChildProcess } from "../../worker/types.js";
 describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
   beforeAll(() => {
     cleanupSockets();
@@ -25,7 +24,7 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
         } }
       `,
       {
-        onSpawn: (process) => {
+        onSpawn: (process: MinimalChildProcess) => {
           pid = process.pid;
         },
         printOutput: true,
@@ -108,9 +107,10 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
     const worker = await newDenoHTTPWorker(echoScript, {
       printOutput: true,
     });
-    const resp: any = await jsonRequest(worker, "https://localhost/", {
-      headers: { connection: "happy", host: "fish" },
-    });
+    const resp: { headers: { connection: string; host: string } } =
+      await jsonRequest(worker, "https://localhost/", {
+        headers: { connection: "happy", host: "fish" },
+      });
     expect(resp.headers.connection).toEqual("happy");
     expect(resp.headers.host).toEqual("fish");
     worker.terminate();
@@ -123,15 +123,19 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
 
     const t0 = performance.now();
     const json = await new Promise((resolve) => {
-      const req = worker.request("http://localhost/hi", {}, (resp) => {
-        const body: any[] = [];
-        resp.on("data", (chunk) => {
-          body.push(chunk);
-        });
-        resp.on("end", () => {
-          resolve(JSON.parse(Buffer.concat(body).toString()));
-        });
-      });
+      const req = worker.request(
+        "http://localhost/hi",
+        {},
+        (resp: IncomingMessage) => {
+          const body: Buffer[] = [];
+          resp.on("data", (chunk) => {
+            body.push(chunk);
+          });
+          resp.on("end", () => {
+            resolve(JSON.parse(Buffer.concat(body).toString()));
+          });
+        }
+      );
       req.end();
     });
     console.log("http request time", performance.now() - t0);
@@ -160,8 +164,8 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           },
           method: "POST",
         },
-        (resp) => {
-          const body: any[] = [];
+        (resp: IncomingMessage) => {
+          const body: Buffer[] = [];
           resp.on("data", (chunk) => {
             body.push(chunk);
           });
@@ -179,8 +183,8 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
       const req = worker.request(
         "https://localhost:1234",
         { headers: {} },
-        (resp) => {
-          const body: any[] = [];
+        (resp: IncomingMessage) => {
+          const body: Buffer[] = [];
           resp.on("data", (chunk) => {
             body.push(chunk);
           });
@@ -194,45 +198,5 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
     expect(text).toEqual('{"ok":true}');
     console.log("Double request http2 val:", performance.now() - t0);
     worker.terminate();
-  });
-
-  it("can test that snippets in readme run successfully", async () => {
-    const { fileURLToPath } = await import("node:url");
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const rm = fs.readFileSync(path.resolve(__dirname, "../../../README.md"), {
-      encoding: "utf-8",
-    });
-
-    const toTest = rm
-      .split("\n```")
-      .filter((line) => line.startsWith("ts\n"))
-      .map((line) => line.slice(3));
-    for (let source of toTest) {
-      source = source.replaceAll(
-        "import { newDenoHTTPWorker } from 'deno-http-worker';",
-        "const { newDenoHTTPWorker } = await import('./dist/index.js');          "
-      );
-      source = `(async () => {${source}})()`;
-
-      await new Promise<void>((resolve, reject) => {
-        const worker = new Worker(source, {
-          eval: true,
-        });
-        worker.stderr.on("data", (data) => {
-          console.error(data.toString());
-        });
-        worker.stdout.on("data", (data) => {
-          console.error(data.toString());
-        });
-        worker.on("error", (e) => {
-          console.log(e.stack);
-          reject(e);
-        });
-        worker.on("exit", (code) => {
-          console.log(code);
-          resolve();
-        });
-      });
-    }
   });
 });

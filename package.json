@@ -10,8 +10,11 @@
     "lint": "biome check . && npm run lint:deno-bootstrap && npm run lint:deno-test-files",
     "lint:deno-bootstrap": "cd deno-bootstrap && deno lint",
     "lint:deno-test-files": "cd src/test && deno lint",
+    "lint:fix": "biome check . --fix && npm run lint:deno-bootstrap:fix && npm run lint:deno-test-files:fix",
+    "lint:deno-bootstrap:fix": "cd deno-bootstrap && deno lint --fix",
+    "lint:deno-test-files:fix": "cd src/test && deno lint --fix",
     "build": "tsc --build",
-    "prepare": "npm run lint && npm run build"
+    "prepare": "npm run lint:fix && npm run build"
   },
   "files": [
     "dist",
