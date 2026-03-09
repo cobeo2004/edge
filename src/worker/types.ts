@@ -160,6 +160,25 @@ export interface DenoWorkerOptions {
    * After this, the worker is terminated and respawns on next request.
    */
   workerMaxDuration?: number;
+
+  /**
+   * Interval in ms between health-check pings. Health checks are disabled
+   * when not set. Only used by EdgeFunctionServer.
+   */
+  healthCheckInterval?: number;
+
+  /**
+   * Timeout in ms for each health-check ping. Defaults to 5000.
+   * Only used by EdgeFunctionServer.
+   */
+  healthCheckTimeout?: number;
+
+  /**
+   * Number of consecutive health-check failures before the worker is
+   * considered unhealthy and restarted. Defaults to 3.
+   * Only used by EdgeFunctionServer.
+   */
+  healthCheckMaxFailures?: number;
 }
 
 export interface RequestStats {
