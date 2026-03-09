@@ -5,6 +5,7 @@ import readline from "node:readline";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import process from "node:process";
 
 import type { DenoWorkerOptions, LogLevel } from "./types.js";
 import { EarlyExitDenoHTTPWorkerError } from "./types.js";

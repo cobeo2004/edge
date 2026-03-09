@@ -1,4 +1,4 @@
-import type { http } from "node:http";
+import type { IncomingMessage } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import type { DenoHTTPWorker } from "../../index.js";
@@ -14,20 +14,16 @@ export const jsonRequest = (
   opts?: { headers?: { [key: string]: string }; body?: string }
 ): Promise<unknown> => {
   return new Promise((resolve, reject) => {
-    const req = worker.request(
-      url,
-      opts || {},
-      (resp: http.IncomingMessage) => {
-        const body: Buffer[] = [];
-        resp.on("error", reject);
-        resp.on("data", (chunk: Buffer) => {
-          body.push(chunk);
-        });
-        resp.on("end", () => {
-          resolve(JSON.parse(Buffer.concat(body).toString()));
-        });
-      }
-    );
+    const req = worker.request(url, opts || {}, (resp: IncomingMessage) => {
+      const body: Buffer[] = [];
+      resp.on("error", reject);
+      resp.on("data", (chunk: Buffer) => {
+        body.push(chunk);
+      });
+      resp.on("end", () => {
+        resolve(JSON.parse(Buffer.concat(body).toString()));
+      });
+    });
     req.on("error", reject);
     req.end();
   });
