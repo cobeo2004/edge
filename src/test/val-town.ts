@@ -31,7 +31,7 @@ export default {
           resolve(handler(req));
         }
       } catch (e) {
-        return new Response(e, { status: 500 });
+        return new Response(e as BodyInit, { status: 500 });
       }
       return new Response("vt-done");
     }
