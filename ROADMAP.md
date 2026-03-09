@@ -13,6 +13,7 @@ Make `@cobeo2004/edge` a production-grade, self-hosted Deno edge function runtim
 - Import maps and `deno.json` config support
 - Configurable log levels with custom handlers
 - Graceful shutdown and auto-respawn on worker exit
+- Execution limits: memory caps, per-request timeout, worker max duration, and resource usage stats
 
 ---
 
@@ -44,24 +45,20 @@ Built-in `.env` loading and secret masking for both workers and the edge functio
 
 ### Execution Limits
 
+**Status:** Done
+
+Resource limits to prevent runaway functions from consuming unbounded resources:
+- `memoryLimitMb` — caps V8 heap via `--v8-flags=--max-old-space-size=N`; OOM crashes the worker and it respawns on next request
+- `requestTimeout` — per-request timeout in ms using `req.setTimeout()`; aborts the request without killing the worker; `EdgeFunctionServer` returns 504
+- `workerMaxDuration` — wall-clock lifetime limit in ms; worker auto-terminates and respawns on next request
+- `onRequestStats` callback and `getWorkerStats(name)` method for per-request timing, status codes, timeout tracking, request counts, uptime, and restart counts
+- All options available on both `DenoWorkerOptions` (worker-level) and `EdgeFunctionServerOptions` (server-level)
+
+### Health Checks
+
 **Status:** Not started
 
-Supabase enforces CPU time limits (50 ms default, configurable), memory caps, and request-level timeouts. This project has no resource limits — a runaway function can consume unbounded resources.
-
 **Planned:**
-- Configurable request timeout (kill worker if exceeded)
-- Wall-clock execution limit per invocation
-- Memory limit via Deno's `--v8-flags=--max-old-space-size`
-- Expose resource usage stats per request
-
-### Request Timeout & Health Checks
-
-**Status:** Not started
-
-No mechanism to detect or recover from hung workers beyond process exit.
-
-**Planned:**
-- Per-request timeout with automatic 504 response
 - Periodic health-check pings to workers
 - Auto-restart unhealthy workers
 
