@@ -389,7 +389,7 @@ export class EdgeFunctionServer {
     });
   }
 
-  #resolveHealthCheckConfig(name: string): {
+  #resolveHealthCheckConfig(): {
     interval: number;
     timeout: number;
     maxFailures: number;
@@ -413,12 +413,15 @@ export class EdgeFunctionServer {
   }
 
   #startHealthCheck(name: string, worker: DenoHTTPWorker): void {
-    const config = this.#resolveHealthCheckConfig(name);
+    const config = this.#resolveHealthCheckConfig();
     if (!config) return;
 
     this.#healthCheckFailures.set(name, 0);
 
     const timer = setInterval(async () => {
+      // Skip if this worker has been replaced
+      if (this.#workers.get(name) !== worker) return;
+
       const healthy = await new Promise<boolean>((resolve) => {
         const timeoutId = setTimeout(() => resolve(false), config.timeout);
         try {
@@ -466,7 +469,9 @@ export class EdgeFunctionServer {
         }
         this.#workerPromises.delete(name);
         if (this.#functions.has(name)) {
-          this.#getOrCreateWorker(name).catch(() => {});
+          this.#getOrCreateWorker(name).catch((err) => {
+            this.#options.onFunctionError?.(name, err as Error);
+          });
         }
       }
     }, config.interval);
