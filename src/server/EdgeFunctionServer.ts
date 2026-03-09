@@ -101,6 +101,8 @@ export class EdgeFunctionServer {
   #requestCounts = new Map<string, number>();
   #workerSpawnTimes = new Map<string, number>();
   #restartCounts = new Map<string, number>();
+  #healthCheckTimers = new Map<string, ReturnType<typeof setInterval>>();
+  #healthCheckFailures = new Map<string, number>();
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -148,6 +150,10 @@ export class EdgeFunctionServer {
     }
     this.#debounceTimers.clear();
 
+    for (const name of [...this.#healthCheckTimers.keys()]) {
+      this.#stopHealthCheck(name);
+    }
+
     for (const worker of this.#workers.values()) {
       worker.terminate();
     }
@@ -172,6 +178,7 @@ export class EdgeFunctionServer {
   }
 
   async restartFunction(name: string): Promise<void> {
+    this.#stopHealthCheck(name);
     const existing = this.#workers.get(name);
     if (existing) {
       existing.terminate();
@@ -382,6 +389,100 @@ export class EdgeFunctionServer {
     });
   }
 
+  #resolveHealthCheckConfig(name: string): {
+    interval: number;
+    timeout: number;
+    maxFailures: number;
+  } | null {
+    const workerOpts = this.#options.workerOptions ?? {};
+    const interval =
+      workerOpts.healthCheckInterval ?? this.#options.healthCheckInterval;
+    if (interval === undefined) return null;
+
+    return {
+      interval,
+      timeout:
+        workerOpts.healthCheckTimeout ??
+        this.#options.healthCheckTimeout ??
+        5000,
+      maxFailures:
+        workerOpts.healthCheckMaxFailures ??
+        this.#options.healthCheckMaxFailures ??
+        3,
+    };
+  }
+
+  #startHealthCheck(name: string, worker: DenoHTTPWorker): void {
+    const config = this.#resolveHealthCheckConfig(name);
+    if (!config) return;
+
+    this.#healthCheckFailures.set(name, 0);
+
+    const timer = setInterval(async () => {
+      const healthy = await new Promise<boolean>((resolve) => {
+        const timeoutId = setTimeout(() => resolve(false), config.timeout);
+        try {
+          const req = worker.request(
+            "http://deno/__health",
+            { method: "GET" },
+            (res) => {
+              res.on("data", () => {});
+              res.on("end", () => {
+                clearTimeout(timeoutId);
+                resolve(true);
+              });
+              res.on("error", () => {
+                clearTimeout(timeoutId);
+                resolve(false);
+              });
+            }
+          );
+          req.on("error", () => {
+            clearTimeout(timeoutId);
+            resolve(false);
+          });
+          req.end();
+        } catch {
+          clearTimeout(timeoutId);
+          resolve(false);
+        }
+      });
+
+      if (healthy) {
+        this.#healthCheckFailures.set(name, 0);
+        return;
+      }
+
+      const failures = (this.#healthCheckFailures.get(name) ?? 0) + 1;
+      this.#healthCheckFailures.set(name, failures);
+
+      if (failures >= config.maxFailures) {
+        this.#stopHealthCheck(name);
+        this.#options.onWorkerUnhealthy?.(name, failures);
+        const existing = this.#workers.get(name);
+        if (existing) {
+          existing.terminate();
+          this.#workers.delete(name);
+        }
+        this.#workerPromises.delete(name);
+        if (this.#functions.has(name)) {
+          this.#getOrCreateWorker(name).catch(() => {});
+        }
+      }
+    }, config.interval);
+
+    this.#healthCheckTimers.set(name, timer);
+  }
+
+  #stopHealthCheck(name: string): void {
+    const timer = this.#healthCheckTimers.get(name);
+    if (timer) {
+      clearInterval(timer);
+      this.#healthCheckTimers.delete(name);
+    }
+    this.#healthCheckFailures.delete(name);
+  }
+
   getWorkerStats(name: string): {
     totalRequests: number;
     uptimeMs: number;
@@ -423,10 +524,12 @@ export class EdgeFunctionServer {
 
       // Auto-remove on exit so next request respawns
       worker.addEventListener("exit", () => {
+        this.#stopHealthCheck(name);
         this.#workers.delete(name);
       });
 
       this.#options.onFunctionReady?.(name);
+      this.#startHealthCheck(name, worker);
       return worker;
     } catch (err) {
       this.#workerPromises.delete(name);
