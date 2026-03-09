@@ -70,11 +70,15 @@ export const newDenoHTTPWorker = async (
       : `${socketFile},${fileURLToPath(script)}`;
 
   // Merge env layers: process.env → spawnOptions.env → options.env
-  if (_options.env) {
-    const baseEnv = _options.spawnOptions.env ?? process.env;
+  if (_options.env || _options.spawnOptions.env) {
+    const mergedEnv = {
+      ...process.env,
+      ..._options.spawnOptions.env,
+      ..._options.env,
+    };
     _options.spawnOptions = {
       ..._options.spawnOptions,
-      env: { ...baseEnv, ..._options.env },
+      env: mergedEnv,
     };
   }
 

@@ -36,4 +36,14 @@ describe("createSecretMasker", () => {
     const mask = createSecretMasker(["secret"]);
     expect(mask("secret and secret again")).toBe("*** and *** again");
   });
+
+  it("masks longer secrets first to prevent partial leaks", () => {
+    const mask = createSecretMasker(["abc", "abc123"]);
+    expect(mask("value is abc123")).toBe("value is ***");
+  });
+
+  it("deduplicates secrets", () => {
+    const mask = createSecretMasker(["secret", "secret", "secret"]);
+    expect(mask("the secret is out")).toBe("the *** is out");
+  });
 });

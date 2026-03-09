@@ -23,6 +23,17 @@ const SERVE_BOOTSTRAP_PATH = path.resolve(
 
 const ENTRYPOINT_NAMES = ["index.ts", "index.tsx", "index.js", "index.mjs"];
 
+const SECRET_KEY_PATTERN =
+  /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
+
+function filterSecretValues(
+  env: Record<string, string>
+): string[] {
+  return Object.entries(env)
+    .filter(([key]) => SECRET_KEY_PATTERN.test(key))
+    .map(([, value]) => value);
+}
+
 export interface EdgeFunctionServerOptions {
   /** Absolute path to the functions directory */
   functionsDir: string;
@@ -174,9 +185,9 @@ export class EdgeFunctionServer {
       ...(this.#options.env ?? {}),
     };
 
-    // Collect secret values for masking
+    // Collect secret values for masking (only keys matching secret-like patterns)
     if (this.#options.maskSecrets !== false) {
-      this.#secretValues = Object.values(this.#envBase);
+      this.#secretValues = filterSecretValues(this.#envBase);
     }
   }
 
@@ -360,9 +371,9 @@ export class EdgeFunctionServer {
     // Collect per-function secrets for masking
     let secretValues = this.#secretValues;
     if (this.#options.maskSecrets !== false) {
-      const perFunctionSecrets = Object.values(perFunctionEnv);
+      const perFunctionSecrets = filterSecretValues(perFunctionEnv);
       const workerSecrets = userOptions.env
-        ? Object.values(userOptions.env)
+        ? filterSecretValues(userOptions.env)
         : [];
       secretValues = [...secretValues, ...perFunctionSecrets, ...workerSecrets];
     }

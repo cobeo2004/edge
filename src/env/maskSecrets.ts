@@ -6,8 +6,12 @@
 export function createSecretMasker(
   secrets: string[]
 ): (message: string) => string {
-  const filtered = secrets.filter((s) => s.length >= 3);
+  const filtered = [...new Set(secrets.filter((s) => s.length >= 3))];
   if (filtered.length === 0) return (msg) => msg;
+
+  // Sort by descending length so longer secrets match first,
+  // preventing partial masking when one secret is a substring of another.
+  filtered.sort((a, b) => b.length - a.length);
 
   const escaped = filtered.map((s) =>
     s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")

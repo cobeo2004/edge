@@ -82,12 +82,15 @@ describe("EdgeFunctionServer – env", { timeout: 15_000 }, () => {
     });
     await server.start();
 
-    // Make a request to trigger logging
+    // Make a request to trigger logging (fixture logs the env value)
     await httpRequest(server.port, "/env-test/?var=LOG_SECRET");
 
-    // Verify that if any log contains the secret, it's masked
-    for (const log of logs) {
+    // Verify the secret value is masked in logs
+    const secretLogs = logs.filter((log) => log.includes("LOG_SECRET"));
+    expect(secretLogs.length).toBeGreaterThan(0);
+    for (const log of secretLogs) {
       expect(log).not.toContain("super_secret_value");
+      expect(log).toContain("***");
     }
   });
 
@@ -112,7 +115,8 @@ describe("EdgeFunctionServer – env", { timeout: 15_000 }, () => {
     await server.start();
 
     await httpRequest(server.port, "/env-test/?var=LOG_SECRET");
-    // With maskSecrets=false, secrets are not masked (no assertion needed,
-    // just verify it doesn't throw)
+
+    // With maskSecrets=false, secrets should appear unmasked in the logs
+    expect(logs.some((log) => log.includes("super_secret_value"))).toBe(true);
   });
 });
