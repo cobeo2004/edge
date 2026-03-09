@@ -2,7 +2,7 @@
 
 [![NPM version](https://img.shields.io/npm/v/@cobeo2004/edge.svg?style=flat)](https://npmjs.org/package/@cobeo2004/edge)
 
-Securely spawn Deno HTTP workers from Node.js over Unix sockets.
+Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 
 > **Forked from [@valtown/deno-http-worker](https://github.com/val-town/deno-http-worker).**
 > Full credit to [Val Town](https://val.town) for the original design and implementation.
@@ -59,13 +59,13 @@ flowchart TD
 **Prerequisites:** [Deno](https://deno.com) must be installed and available on `PATH`.
 
 ```bash
-npm install @cobeo2004/deno-http-worker
+npm install @cobeo2004/edge
 ```
 
 ## Quick Start
 
 ```ts
-import { newDenoHTTPWorker } from "@cobeo2004/deno-http-worker";
+import { newDenoHTTPWorker } from "@cobeo2004/edge";
 
 const worker = await newDenoHTTPWorker(
   `export default {
@@ -114,7 +114,7 @@ functions/
 Each function must have an entrypoint file (`index.ts`, `index.tsx`, `index.js`, or `index.mjs`) that calls `Deno.serve()`.
 
 ```ts
-import { newEdgeFunctionServer } from "@cobeo2004/deno-http-worker";
+import { newEdgeFunctionServer } from "@cobeo2004/edge";
 
 const server = newEdgeFunctionServer({
   functionsDir: "/absolute/path/to/functions",
@@ -138,6 +138,116 @@ await server.start();
 await server.stop();
 ```
 
+## Multi-Runtime Server Adapters
+
+`EdgeFunctionServer` uses a pluggable adapter system for the host-facing HTTP server. By default, it auto-detects the runtime and selects the appropriate adapter:
+
+- **Node.js** — `node:http` with web standard `Request`/`Response` conversion
+- **Bun** — native `Bun.serve()`
+- **Deno** — native `Deno.serve()`
+
+You can explicitly set the adapter:
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  adapter: "bun", // or "node", "deno"
+});
+```
+
+Or provide a custom adapter implementing the `ServerAdapter` interface:
+
+```ts
+import type {
+  ServerAdapter,
+  AdapterServer,
+  RequestHandler,
+} from "@cobeo2004/edge";
+
+const myAdapter: ServerAdapter = {
+  createServer(handler: RequestHandler): AdapterServer {
+    // Return an object with listen(), close(), and port
+  },
+};
+
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  adapter: myAdapter,
+});
+```
+
+> **Note:** Only the host-facing HTTP server is adapted. Worker communication (`worker.request()`) always uses `node:http` over Unix sockets — all three runtimes support this via Node.js compatibility layers.
+
+## Environment Variables & Secrets
+
+`EdgeFunctionServer` automatically loads `.env` files and supports programmatic env var injection with secret masking in logs.
+
+### `.env` file loading
+
+Place `.env` files in your functions directory for automatic loading:
+
+```
+functions/
+├── .env              ← global, applied to all workers
+├── hello/
+│   └── index.ts
+└── greet/
+    ├── .env          ← per-function, applied only to greet
+    └── index.ts
+```
+
+### Precedence (lowest → highest)
+
+1. `process.env` (host environment)
+2. Global `.env` at `functionsDir/.env`
+3. Additional `envFiles` (array order)
+4. `EdgeFunctionServerOptions.env` (programmatic)
+5. Per-function `.env` at `functionsDir/<name>/.env`
+6. `workerOptions.env` (programmatic per-worker)
+
+### Server-level env options
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  env: { API_KEY: "my-key" }, // applied to all workers
+  envFiles: ["/path/to/extra.env"], // additional .env files
+  maskSecrets: true, // mask env values in logs (default: true)
+});
+```
+
+### Worker-level env option
+
+```ts
+const worker = await newDenoHTTPWorker(script, {
+  runFlags: ["--allow-net", "--allow-env"],
+  env: { MY_VAR: "value" }, // merged on top of process.env
+});
+```
+
+### Secret masking
+
+When `maskSecrets` is enabled (the default), environment variables whose keys contain `SECRET`, `KEY`, `TOKEN`, `PASSWORD`, `CREDENTIAL`, `AUTH`, or `PRIVATE` are automatically masked in log output by replacing their values with `***`. Values shorter than 3 characters are not masked. Disable with `maskSecrets: false`.
+
+### Standalone utilities
+
+The `.env` parser and secret masker are exported for direct use:
+
+```ts
+import { parseEnvFile, loadEnvFile, createSecretMasker } from "@cobeo2004/edge";
+
+const vars = parseEnvFile('KEY="value"\n# comment\nFOO=bar');
+// { KEY: "value", FOO: "bar" }
+
+const vars2 = await loadEnvFile("/path/to/.env"); // {} on ENOENT
+
+const mask = createSecretMasker(["my-secret-key"]);
+mask("token is my-secret-key"); // "token is ***"
+```
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -147,6 +257,7 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `runFlags`                 | `string[]`                         | Deno permission flags (e.g. `["--allow-net"]`)                                           |
 | `importMapPath`            | `string`                           | Path to an import map JSON file                                                          |
 | `configPath`               | `string`                           | Path to a `deno.json` config file                                                        |
+| `env`                      | `Record<string, string>`           | Environment variables merged on top of `process.env`                                     |
 | `denoExecutable`           | `string \| string[]`               | Path to the Deno binary (default: `"deno"`)                                              |
 | `logLevel`                 | `LogLevel`                         | Logging verbosity: `"debug"`, `"info"`, `"warn"`, `"error"`, `"silent"` (default)        |
 | `onLog`                    | `(level, source, message) => void` | Custom log handler (default: `console.log`/`console.error` with `[deno]` prefix)         |
@@ -157,16 +268,20 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 
 `EdgeFunctionServerOptions` additionally supports:
 
-| Option          | Type                                             | Description                                                                      |
-| --------------- | ------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `functionsDir`  | `string`                                         | Absolute path to the functions directory                                         |
-| `port`          | `number`                                         | Port to listen on                                                                |
-| `hostname`      | `string`                                         | Hostname to bind to (default: `"127.0.0.1"`)                                     |
-| `eagerSpawn`    | `boolean`                                        | Spawn all workers at startup (default: `false`)                                  |
-| `hotReload`     | `boolean`                                        | Watch & restart on file changes (default: `false`)                               |
-| `workerOptions` | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                 |
-| `logLevel`      | `LogLevel`                                       | Log level for all function workers (default: `"silent"`)                         |
-| `onLog`         | `(functionName, level, source, message) => void` | Custom log handler with function name context (default: `[deno:${name}]` prefix) |
+| Option          | Type                                             | Description                                                                                     |
+| --------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `functionsDir`  | `string`                                         | Absolute path to the functions directory                                                        |
+| `port`          | `number`                                         | Port to listen on                                                                               |
+| `hostname`      | `string`                                         | Hostname to bind to (default: `"127.0.0.1"`)                                                    |
+| `adapter`       | `RuntimeName \| ServerAdapter`                   | Server adapter: `"node"`, `"bun"`, `"deno"`, or a custom `ServerAdapter` (default: auto-detect) |
+| `eagerSpawn`    | `boolean`                                        | Spawn all workers at startup (default: `false`)                                                 |
+| `hotReload`     | `boolean`                                        | Watch & restart on file changes (default: `false`)                                              |
+| `workerOptions` | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                                |
+| `logLevel`      | `LogLevel`                                       | Log level for all function workers (default: `"silent"`)                                        |
+| `onLog`         | `(functionName, level, source, message) => void` | Custom log handler with function name context (default: `[deno:${name}]` prefix)                |
+| `env`           | `Record<string, string>`                         | Environment variables applied to all workers                                                    |
+| `envFiles`      | `string[]`                                       | Additional `.env` file paths loaded at startup                                                  |
+| `maskSecrets`   | `boolean`                                        | Mask env var values in log output (default: `true`)                                             |
 
 ## Logging
 
@@ -252,17 +367,27 @@ Alternatively, use `configPath` to point to a full `deno.json` which supports `i
 
 ### Exports
 
-| Export                              | Kind     | Description                                                   |
-| ----------------------------------- | -------- | ------------------------------------------------------------- |
-| `newDenoHTTPWorker(code, options?)` | Function | Spawn a Deno worker from inline code or a URL                 |
-| `newEdgeFunctionServer(options)`    | Function | Create an `EdgeFunctionServer` instance                       |
-| `DenoHTTPWorker`                    | Type     | Worker instance with `request()`, `terminate()`, `shutdown()` |
-| `EdgeFunctionServer`                | Class    | HTTP server routing to per-function Deno workers              |
-| `DenoWorkerOptions`                 | Type     | Options for `newDenoHTTPWorker`                               |
-| `EdgeFunctionServerOptions`         | Type     | Options for `EdgeFunctionServer`                              |
-| `LogLevel`                          | Type     | `"debug" \| "info" \| "warn" \| "error" \| "silent"`          |
-| `EarlyExitDenoHTTPWorkerError`      | Class    | Error thrown when the Deno process exits unexpectedly         |
-| `MinimalChildProcess`               | Type     | Interface for the spawned child process                       |
+| Export                              | Kind     | Description                                                     |
+| ----------------------------------- | -------- | --------------------------------------------------------------- |
+| `newDenoHTTPWorker(code, options?)` | Function | Spawn a Deno worker from inline code or a URL                   |
+| `newEdgeFunctionServer(options)`    | Function | Create an `EdgeFunctionServer` instance                         |
+| `DenoHTTPWorker`                    | Type     | Worker instance with `request()`, `terminate()`, `shutdown()`   |
+| `EdgeFunctionServer`                | Class    | HTTP server routing to per-function Deno workers                |
+| `DenoWorkerOptions`                 | Type     | Options for `newDenoHTTPWorker`                                 |
+| `EdgeFunctionServerOptions`         | Type     | Options for `EdgeFunctionServer`                                |
+| `LogLevel`                          | Type     | `"debug" \| "info" \| "warn" \| "error" \| "silent"`            |
+| `EarlyExitDenoHTTPWorkerError`      | Class    | Error thrown when the Deno process exits unexpectedly           |
+| `MinimalChildProcess`               | Type     | Interface for the spawned child process                         |
+| `ServerAdapter`                     | Type     | Adapter interface for pluggable HTTP servers                    |
+| `AdapterServer`                     | Type     | Server instance returned by an adapter                          |
+| `RequestHandler`                    | Type     | `(request: Request) => Promise<Response>`                       |
+| `RuntimeName`                       | Type     | `"node" \| "bun" \| "deno"`                                     |
+| `detectRuntime()`                   | Function | Detect current runtime (`"node"`, `"bun"`, or `"deno"`)         |
+| `resolveAdapter(option?)`           | Function | Resolve a `ServerAdapter` from a runtime name or custom adapter |
+| `nodeAdapter`                       | Object   | Built-in Node.js server adapter                                 |
+| `parseEnvFile(content)`             | Function | Parse `.env` file content into a key-value record               |
+| `loadEnvFile(path)`                 | Function | Load and parse a `.env` file (returns `{}` on ENOENT)           |
+| `createSecretMasker(secrets)`       | Function | Create a function that masks secret values in strings           |
 
 ## License
 

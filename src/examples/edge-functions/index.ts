@@ -16,8 +16,12 @@ const FUNCTIONS_DIR = path.resolve(__dirname, "functions");
 const server = new EdgeFunctionServer({
   functionsDir: FUNCTIONS_DIR,
   port: 3000,
+  adapter: "bun",
   configPath: path.join(FUNCTIONS_DIR, "deno.json"),
   logLevel: "debug",
+  env: {
+    AT_VAR: "at_value",
+  },
   onLog: (functionName, level, source, message) => {
     console.log(`  [${functionName}] ${level} ${source} ${message}`);
   },

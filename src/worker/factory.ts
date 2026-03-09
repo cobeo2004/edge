@@ -5,6 +5,7 @@ import readline from "node:readline";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import process from "node:process";
 
 import type { DenoWorkerOptions, LogLevel } from "./types.js";
 import { EarlyExitDenoHTTPWorkerError } from "./types.js";
@@ -68,6 +69,19 @@ export const newDenoHTTPWorker = async (
     typeof script === "string"
       ? socketFile
       : `${socketFile},${fileURLToPath(script)}`;
+
+  // Merge env layers: process.env → spawnOptions.env → options.env
+  if (_options.env || _options.spawnOptions.env) {
+    const mergedEnv = {
+      ...process.env,
+      ..._options.spawnOptions.env,
+      ..._options.env,
+    };
+    _options.spawnOptions = {
+      ..._options.spawnOptions,
+      env: mergedEnv,
+    };
+  }
 
   if (_options.importMapPath) {
     allowReadFlagValue += `,${_options.importMapPath}`;

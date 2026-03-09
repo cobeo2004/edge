@@ -20,29 +20,27 @@ Make `@cobeo2004/edge` a production-grade, self-hosted Deno edge function runtim
 
 ### Multi-Runtime Server Adapters
 
-**Status:** Not started
+**Status:** Done
 
-`EdgeFunctionServer` is currently built on `node:http` and can only run on Node.js. Users on Bun or Deno cannot use the server component natively — they must run it through Node.js compatibility layers, missing out on runtime-specific performance and APIs.
-
-**Planned:**
-- Adapter abstraction layer — decouple `EdgeFunctionServer` from `node:http` behind a common interface (`createServer`, `listen`, `close`, request/response mapping)
-- `node` adapter (current behavior, default)
-- `bun` adapter — use `Bun.serve()` for the host server, leveraging Bun's faster HTTP handling
-- `deno` adapter — use `Deno.serve()` for the host server
-- Auto-detect runtime and select adapter automatically, with manual override via `adapter` option
-- Ensure all adapters support the full feature set (streaming, headers, status codes, error handling)
+`EdgeFunctionServer` is decoupled from `node:http` behind a `ServerAdapter` interface using web standard `Request`/`Response`. Three adapters are provided:
+- `node` adapter (default) — wraps `http.createServer` with web ↔ node:http conversion
+- `bun` adapter — wraps `Bun.serve()` for native Bun HTTP handling
+- `deno` adapter — wraps `Deno.serve()` for native Deno HTTP handling
+- Runtime auto-detection selects the appropriate adapter, with manual override via `adapter` option on `EdgeFunctionServerOptions`
+- All adapter types (`ServerAdapter`, `AdapterServer`, `RequestHandler`, `RuntimeName`) are exported from the package
 
 ### Environment Variables & Secrets Management
 
-**Status:** Not started
+**Status:** Done
 
-Supabase automatically loads `.env` files and provides a secrets management layer (`supabase secrets set`). Currently, `@cobeo2004/edge` has no built-in env var handling — users must pass `--allow-env` and manage variables manually via `spawnOptions.env`.
-
-**Planned:**
-- Per-function `.env` file loading (auto-discover `functions/<name>/.env`)
-- Global `.env` support at the functions directory root
-- Programmatic API to set/override env vars per worker
-- Secret masking in log output
+Built-in `.env` loading and secret masking for both workers and the edge function server:
+- Global `.env` at `functionsDir/.env` auto-loaded at startup
+- Per-function `.env` at `functionsDir/<name>/.env` auto-loaded per worker
+- Additional `envFiles` array for extra `.env` paths
+- Programmatic `env` option on both `EdgeFunctionServerOptions` and `DenoWorkerOptions`
+- Six-layer precedence: `process.env` → global `.env` → `envFiles` → programmatic `env` → per-function `.env` → `workerOptions.env`
+- Secret masking in log output (enabled by default, opt-out with `maskSecrets: false`)
+- Exported utilities: `parseEnvFile()`, `loadEnvFile()`, `createSecretMasker()`
 
 ### Execution Limits
 

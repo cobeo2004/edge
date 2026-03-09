@@ -1,4 +1,5 @@
 import http from "node:http";
+import { Buffer } from "node:buffer";
 
 export function httpRequest(
   port: number,

@@ -1,4 +1,3 @@
-import http from "node:http";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +8,10 @@ import {
   type LogLevel,
   newDenoHTTPWorker,
 } from "../worker/index.js";
+import { loadEnvFile, createSecretMasker } from "../env/index.js";
+import type { AdapterServer, ServerAdapter } from "./adapters/types.js";
+import type { RuntimeName } from "./adapters/detect.js";
+import { resolveAdapter } from "./adapters/detect.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,6 +22,14 @@ const SERVE_BOOTSTRAP_PATH = path.resolve(
 );
 
 const ENTRYPOINT_NAMES = ["index.ts", "index.tsx", "index.js", "index.mjs"];
+
+const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
+
+function filterSecretValues(env: Record<string, string>): string[] {
+  return Object.entries(env)
+    .filter(([key]) => SECRET_KEY_PATTERN.test(key))
+    .map(([, value]) => value);
+}
 
 export interface EdgeFunctionServerOptions {
   /** Absolute path to the functions directory */
@@ -41,6 +52,8 @@ export interface EdgeFunctionServerOptions {
   importMapPath?: string;
   /** Path to a Deno config file (deno.json) passed to each worker */
   configPath?: string;
+  /** Server adapter: 'node' | 'bun' | 'deno' or a custom ServerAdapter. Default: auto-detect */
+  adapter?: RuntimeName | ServerAdapter;
   /** Log level for worker output. Defaults to "silent" */
   logLevel?: LogLevel;
   /** Custom log handler for worker output, receives the function name */
@@ -50,6 +63,12 @@ export interface EdgeFunctionServerOptions {
     source: "stdout" | "stderr" | "command",
     message: string
   ) => void;
+  /** Environment variables applied to all workers */
+  env?: Record<string, string>;
+  /** Additional .env file paths loaded at start() */
+  envFiles?: string[];
+  /** Mask secret values in log output. Defaults to true */
+  maskSecrets?: boolean;
 }
 
 export class EdgeFunctionServer {
@@ -57,9 +76,11 @@ export class EdgeFunctionServer {
   #workers = new Map<string, DenoHTTPWorker>();
   #workerPromises = new Map<string, Promise<DenoHTTPWorker>>();
   #functions = new Map<string, string>();
-  #server: http.Server | undefined;
+  #server: AdapterServer | undefined;
   #watcher: fs.FSWatcher | undefined;
   #debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #envBase: Record<string, string> = {};
+  #secretValues: string[] = [];
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -67,19 +88,24 @@ export class EdgeFunctionServer {
 
   async start(): Promise<void> {
     await this.#scanFunctions();
+    await this.#loadEnv();
 
-    this.#server = http.createServer((req, res) => {
-      this.#handleRequest(req, res).catch((err) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal Server Error" }));
+    const adapter = await resolveAdapter(this.#options.adapter);
+    this.#server = adapter.createServer((request) =>
+      this.#handleRequest(request).catch((err) => {
         this.#options.onFunctionError?.("unknown", err);
-      });
-    });
+        return new Response(
+          JSON.stringify({ error: "Internal Server Error" }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      })
+    );
 
     const hostname = this.#options.hostname ?? "127.0.0.1";
-    await new Promise<void>((resolve) => {
-      this.#server!.listen(this.#options.port, hostname, resolve);
-    });
+    await this.#server.listen(this.#options.port, hostname);
 
     if (this.#options.hotReload) {
       this.#startWatcher();
@@ -109,19 +135,16 @@ export class EdgeFunctionServer {
     this.#workerPromises.clear();
 
     if (this.#server) {
-      await new Promise<void>((resolve, reject) => {
-        this.#server!.close((err) => (err ? reject(err) : resolve()));
-      });
+      await this.#server.close();
       this.#server = undefined;
     }
   }
 
   get port(): number {
-    const addr = this.#server?.address();
-    if (!addr || typeof addr === "string") {
+    if (!this.#server) {
       throw new Error("Server is not listening");
     }
-    return addr.port;
+    return this.#server.port;
   }
 
   listFunctions(): string[] {
@@ -137,6 +160,34 @@ export class EdgeFunctionServer {
     this.#workerPromises.delete(name);
     if (this.#functions.has(name)) {
       await this.#getOrCreateWorker(name);
+    }
+  }
+
+  async #loadEnv(): Promise<void> {
+    // Layer 2: global .env
+    const globalEnv = await loadEnvFile(
+      path.join(this.#options.functionsDir, ".env")
+    );
+
+    // Layer 3: additional envFiles
+    let envFilesEnv: Record<string, string> = {};
+    if (this.#options.envFiles) {
+      for (const filePath of this.#options.envFiles) {
+        const loaded = await loadEnvFile(filePath);
+        envFilesEnv = { ...envFilesEnv, ...loaded };
+      }
+    }
+
+    // Layer 4: programmatic env
+    this.#envBase = {
+      ...globalEnv,
+      ...envFilesEnv,
+      ...(this.#options.env ?? {}),
+    };
+
+    // Collect secret values for masking (only keys matching secret-like patterns)
+    if (this.#options.maskSecrets !== false) {
+      this.#secretValues = filterSecretValues(this.#envBase);
     }
   }
 
@@ -166,21 +217,16 @@ export class EdgeFunctionServer {
     }
   }
 
-  async #handleRequest(
-    req: http.IncomingMessage,
-    res: http.ServerResponse
-  ): Promise<void> {
-    const url = new URL(
-      req.url ?? "/",
-      `http://${req.headers.host ?? "localhost"}`
-    );
+  async #handleRequest(request: Request): Promise<Response> {
+    const url = new URL(request.url);
     const segments = url.pathname.split("/").filter(Boolean);
     const functionName = segments[0];
 
     if (!functionName || !this.#functions.has(functionName)) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Function not found" }));
-      return;
+      return new Response(JSON.stringify({ error: "Function not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     let worker: DenoHTTPWorker;
@@ -188,9 +234,10 @@ export class EdgeFunctionServer {
       worker = await this.#getOrCreateWorker(functionName);
     } catch (err) {
       this.#options.onFunctionError?.(functionName, err as Error);
-      res.writeHead(502, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Failed to start function worker" }));
-      return;
+      return new Response(
+        JSON.stringify({ error: "Failed to start function worker" }),
+        { status: 502, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     // Rewrite URL: strip the function name prefix
@@ -198,30 +245,85 @@ export class EdgeFunctionServer {
     const rewrittenUrl = `${url.protocol}//${url.host}${remainingPath}${url.search}`;
 
     const headers: Record<string, string> = {};
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (value !== undefined) {
-        headers[key] = Array.isArray(value) ? value.join(", ") : value;
-      }
-    }
-
-    const proxyReq = worker.request(
-      rewrittenUrl,
-      { method: req.method, headers },
-      (proxyRes) => {
-        res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
-        proxyRes.pipe(res);
-      }
-    );
-
-    proxyReq.on("error", (err) => {
-      this.#options.onFunctionError?.(functionName, err);
-      if (!res.headersSent) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Worker request failed" }));
-      }
+    request.headers.forEach((value, key) => {
+      headers[key] = value;
     });
 
-    req.pipe(proxyReq);
+    return new Promise<Response>((resolve, reject) => {
+      const proxyReq = worker.request(
+        rewrittenUrl,
+        { method: request.method, headers },
+        (proxyRes) => {
+          const responseHeaders = new Headers();
+          for (const [key, value] of Object.entries(proxyRes.headers)) {
+            if (value === undefined) continue;
+
+            const headerName = key.toLowerCase();
+            if (Array.isArray(value)) {
+              if (headerName === "set-cookie") {
+                for (const v of value) {
+                  responseHeaders.append(key, v);
+                }
+              } else {
+                responseHeaders.set(key, value.join(", "));
+              }
+            } else {
+              if (headerName === "set-cookie") {
+                responseHeaders.append(key, value);
+              } else {
+                responseHeaders.set(key, value);
+              }
+            }
+          }
+          const body = new ReadableStream({
+            start(controller) {
+              proxyRes.on("data", (chunk: Buffer) => controller.enqueue(chunk));
+              proxyRes.on("end", () => controller.close());
+              proxyRes.on("error", (err) => controller.error(err));
+            },
+          });
+          resolve(
+            new Response(body, {
+              status: proxyRes.statusCode ?? 200,
+              headers: responseHeaders,
+            })
+          );
+        }
+      );
+
+      proxyReq.on("error", (err) => {
+        this.#options.onFunctionError?.(functionName, err);
+        resolve(
+          new Response(JSON.stringify({ error: "Worker request failed" }), {
+            status: 502,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      });
+
+      if (request.body) {
+        const reader = request.body.getReader();
+        const pump = (): void => {
+          reader
+            .read()
+            .then(({ done, value }) => {
+              if (done) {
+                proxyReq.end();
+                return;
+              }
+              proxyReq.write(value);
+              pump();
+            })
+            .catch((err) => {
+              proxyReq.destroy(err);
+              reject(err);
+            });
+        };
+        pump();
+      } else {
+        proxyReq.end();
+      }
+    });
   }
 
   async #getOrCreateWorker(name: string): Promise<DenoHTTPWorker> {
@@ -265,6 +367,27 @@ export class EdgeFunctionServer {
     const defaultRunFlags = ["--allow-net", "--allow-env"];
     const runFlags = userOptions.runFlags ?? defaultRunFlags;
 
+    // Layer 5: per-function .env
+    const functionDir = path.dirname(entrypoint);
+    const perFunctionEnv = await loadEnvFile(path.join(functionDir, ".env"));
+
+    // Merge all layers: base (global + envFiles + programmatic) → per-function → workerOptions.env
+    const mergedEnv: Record<string, string> = {
+      ...this.#envBase,
+      ...perFunctionEnv,
+      ...(userOptions.env ?? {}),
+    };
+
+    // Collect per-function secrets for masking
+    let secretValues = this.#secretValues;
+    if (this.#options.maskSecrets !== false) {
+      const perFunctionSecrets = filterSecretValues(perFunctionEnv);
+      const workerSecrets = userOptions.env
+        ? filterSecretValues(userOptions.env)
+        : [];
+      secretValues = [...secretValues, ...perFunctionSecrets, ...workerSecrets];
+    }
+
     const logLevel =
       this.#options.logLevel ?? userOptions.logLevel ?? undefined;
     let onLog = userOptions.onLog;
@@ -283,6 +406,14 @@ export class EdgeFunctionServer {
       };
     }
 
+    // Wrap onLog with secret masker
+    if (this.#options.maskSecrets !== false && onLog) {
+      const mask = createSecretMasker(secretValues);
+      const originalOnLog = onLog;
+      onLog = (level, source, message) =>
+        originalOnLog(level, source, mask(message));
+    }
+
     return newDenoHTTPWorker(new URL(`file://${entrypoint}`), {
       ...userOptions,
       denoBootstrapScriptPath:
@@ -290,6 +421,7 @@ export class EdgeFunctionServer {
       runFlags,
       importMapPath: this.#options.importMapPath ?? userOptions.importMapPath,
       configPath: this.#options.configPath ?? userOptions.configPath,
+      env: mergedEnv,
       ...(logLevel ? { logLevel } : {}),
       ...(onLog ? { onLog } : {}),
     });
