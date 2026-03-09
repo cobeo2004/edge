@@ -76,6 +76,8 @@ describe("EdgeFunctionServer – lifecycle", { timeout: 15_000 }, () => {
       "hello",
       "import-map-test",
       "npm-import",
+      "oom",
+      "slow",
       "wasm-test",
     ]);
   });
