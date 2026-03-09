@@ -319,7 +319,9 @@ export class EdgeFunctionServer {
         this.#options.onFunctionError?.(functionName, err);
         const timedOut = err.message.includes("timed out");
         const status = timedOut ? 504 : 502;
-        const errorMsg = timedOut ? "Request timed out" : "Worker request failed";
+        const errorMsg = timedOut
+          ? "Request timed out"
+          : "Worker request failed";
         this.#emitStats(functionName, startTime, status, timedOut);
         resolve(
           new Response(JSON.stringify({ error: errorMsg }), {
@@ -407,10 +409,7 @@ export class EdgeFunctionServer {
 
       // Track spawn time; increment restart count if not first spawn
       if (this.#workerSpawnTimes.has(name)) {
-        this.#restartCounts.set(
-          name,
-          (this.#restartCounts.get(name) ?? 0) + 1
-        );
+        this.#restartCounts.set(name, (this.#restartCounts.get(name) ?? 0) + 1);
       }
       this.#workerSpawnTimes.set(name, Date.now());
 

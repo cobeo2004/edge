@@ -8,7 +8,7 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
       `export default { async fetch(req: Request): Promise<Response> {
           return Response.json({ ok: true });
         }}`,
-      { memoryLimitMb: 64 },
+      { memoryLimitMb: 64 }
     );
     const json = await jsonRequest(worker, "https://localhost/test");
     expect(json).toEqual({ ok: true });
@@ -23,7 +23,7 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
             arrays.push(new Array(1_000_000).fill(0));
           }
         }}`,
-      { memoryLimitMb: 32 },
+      { memoryLimitMb: 32 }
     );
 
     const exitPromise = new Promise<{ code: number; signal: string }>(
@@ -31,7 +31,7 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
         worker.addEventListener("exit", (code, signal) => {
           resolve({ code, signal });
         });
-      },
+      }
     );
 
     // The request should fail because OOM kills the process
@@ -54,7 +54,7 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
       {
         memoryLimitMb: 64,
         runFlags: ["--v8-flags=--expose-gc"],
-      },
+      }
     );
     const json = await jsonRequest(worker, "https://localhost/test");
     expect(json).toEqual({ ok: true });
@@ -67,12 +67,12 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
           await new Promise(r => setTimeout(r, 5000));
           return Response.json({ ok: true });
         }}`,
-      { requestTimeout: 200 },
+      { requestTimeout: 200 }
     );
 
     // First request should time out
     await expect(jsonRequest(worker, "https://localhost/test")).rejects.toThrow(
-      "timed out",
+      "timed out"
     );
 
     // Worker should still be alive — a fast request should succeed
@@ -80,7 +80,7 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
       `export default { async fetch(req: Request): Promise<Response> {
           return Response.json({ alive: true });
         }}`,
-      {},
+      {}
     );
     const json = await jsonRequest(worker2, "https://localhost/test");
     expect(json).toEqual({ alive: true });
@@ -94,7 +94,7 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
       `export default { async fetch(req: Request): Promise<Response> {
           return Response.json({ ok: true });
         }}`,
-      { workerMaxDuration: 500 },
+      { workerMaxDuration: 500 }
     );
 
     // Should work immediately

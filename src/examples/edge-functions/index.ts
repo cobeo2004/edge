@@ -35,7 +35,7 @@ const server = new EdgeFunctionServer({
   // Request stats callback
   onRequestStats: (stats) => {
     console.log(
-      `  [stats] ${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})${stats.timedOut ? " TIMED OUT" : ""}`,
+      `  [stats] ${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})${stats.timedOut ? " TIMED OUT" : ""}`
     );
   },
   onFunctionReady: (name) => console.log(`  Function "${name}" is ready`),

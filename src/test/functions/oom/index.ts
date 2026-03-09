@@ -1,4 +1,4 @@
-Deno.serve(async (req) => {
+Deno.serve((req) => {
   const url = new URL(req.url);
   if (url.searchParams.get("oom") === "true") {
     // Allocate memory until OOM
