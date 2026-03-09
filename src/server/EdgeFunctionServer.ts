@@ -627,8 +627,7 @@ export class EdgeFunctionServer {
       env: mergedEnv,
       ...(logLevel ? { logLevel } : {}),
       ...(onLog ? { onLog } : {}),
-      memoryLimitMb:
-        userOptions.memoryLimitMb ?? this.#options.memoryLimitMb,
+      memoryLimitMb: userOptions.memoryLimitMb ?? this.#options.memoryLimitMb,
       requestTimeout:
         userOptions.requestTimeout ?? this.#options.requestTimeout,
       workerMaxDuration:

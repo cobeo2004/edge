@@ -31,7 +31,9 @@ export default {
           resolve(handler(req));
         }
       } catch (e) {
-        return new Response(e instanceof Error ? e.message : String(e), { status: 500 });
+        return new Response(e instanceof Error ? e.message : String(e), {
+          status: 500,
+        });
       }
       return new Response("vt-done");
     }

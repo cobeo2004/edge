@@ -13,7 +13,8 @@
       "WebFetch(domain:deno.land)",
       "WebFetch(domain:docs.supabase.com)",
       "Bash(git log:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(npm test:*)"
     ]
   }
 }

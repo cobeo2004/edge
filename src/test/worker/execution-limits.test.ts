@@ -74,9 +74,9 @@ describe("DenoHTTPWorker – execution limits", { timeout: 30_000 }, () => {
     );
 
     // First request should time out
-    await expect(
-      jsonRequest(worker, "https://localhost/slow")
-    ).rejects.toThrow("timed out");
+    await expect(jsonRequest(worker, "https://localhost/slow")).rejects.toThrow(
+      "timed out"
+    );
 
     // Worker should still be alive — a fast request should succeed
     const json = await jsonRequest(worker, "https://localhost/fast");
