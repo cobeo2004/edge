@@ -78,6 +78,14 @@ export interface EdgeFunctionServerOptions {
   workerMaxDuration?: number;
   /** Called after each request completes with timing and status info */
   onRequestStats?: (stats: RequestStats) => void;
+  /** Interval in ms between health-check pings. Disabled when not set */
+  healthCheckInterval?: number;
+  /** Timeout in ms for each health-check ping. Defaults to 5000 */
+  healthCheckTimeout?: number;
+  /** Consecutive failures before auto-restart. Defaults to 3 */
+  healthCheckMaxFailures?: number;
+  /** Called when a worker is restarted due to failed health checks */
+  onWorkerUnhealthy?: (name: string, consecutiveFailures: number) => void;
 }
 
 export class EdgeFunctionServer {
