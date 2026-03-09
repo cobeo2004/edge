@@ -256,11 +256,23 @@ export class EdgeFunctionServer {
         (proxyRes) => {
           const responseHeaders = new Headers();
           for (const [key, value] of Object.entries(proxyRes.headers)) {
-            if (value !== undefined) {
-              responseHeaders.set(
-                key,
-                Array.isArray(value) ? value.join(", ") : value
-              );
+            if (value === undefined) continue;
+
+            const headerName = key.toLowerCase();
+            if (Array.isArray(value)) {
+              if (headerName === "set-cookie") {
+                for (const v of value) {
+                  responseHeaders.append(key, v);
+                }
+              } else {
+                responseHeaders.set(key, value.join(", "));
+              }
+            } else {
+              if (headerName === "set-cookie") {
+                responseHeaders.append(key, value);
+              } else {
+                responseHeaders.set(key, value);
+              }
             }
           }
           const body = new ReadableStream({
