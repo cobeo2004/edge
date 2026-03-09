@@ -451,6 +451,9 @@ export class EdgeFunctionServer {
         }
       });
 
+      // Worker might have been replaced while the health check was in-flight
+      if (this.#workers.get(name) !== worker) return;
+
       if (healthy) {
         this.#healthCheckFailures.set(name, 0);
         return;
