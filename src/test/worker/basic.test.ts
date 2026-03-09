@@ -1,12 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { type SpawnOptions, spawn } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import { Worker } from "node:worker_threads";
 import { newDenoHTTPWorker } from "../../index.js";
 import { jsonRequest, cleanupSockets } from "../helpers/worker.js";
 import { echoScript } from "../helpers/fixtures.js";
-
+import type { IncomingMessage } from "node:http";
+import { Buffer } from "node:buffer";
+import type { MinimalChildProcess } from "../../worker/types.js";
 describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
   beforeAll(() => {
     cleanupSockets();
@@ -25,11 +24,11 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
         } }
       `,
       {
-        onSpawn: (process) => {
+        onSpawn: (process: MinimalChildProcess) => {
           pid = process.pid;
         },
         printOutput: true,
-      },
+      }
     );
     expect(pid).toBeDefined();
     worker.terminate();
@@ -52,7 +51,7 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           firstArg = args[0] as string;
           return spawn(command, args, options);
         },
-      },
+      }
     );
     expect(firstArg).toEqual("run");
     worker.terminate();
@@ -66,7 +65,7 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url })
         } }
       `,
-      { printOutput: true },
+      { printOutput: true }
     );
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
@@ -88,13 +87,13 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url, headers: headers })
         } }
       `,
-      { printOutput: true },
+      { printOutput: true }
     );
     for (let i = 0; i < 10; i++) {
       const json = await jsonRequest(
         worker,
         "https://localhost/hello?isee=you",
-        { headers: { accept: "application/json" } },
+        { headers: { accept: "application/json" } }
       );
       expect(json).toEqual({
         ok: "https://localhost/hello?isee=you",
@@ -108,9 +107,10 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
     const worker = await newDenoHTTPWorker(echoScript, {
       printOutput: true,
     });
-    const resp: any = await jsonRequest(worker, "https://localhost/", {
-      headers: { connection: "happy", host: "fish" },
-    });
+    const resp: { headers: { connection: string; host: string } } =
+      await jsonRequest(worker, "https://localhost/", {
+        headers: { connection: "happy", host: "fish" },
+      });
     expect(resp.headers.connection).toEqual("happy");
     expect(resp.headers.host).toEqual("fish");
     worker.terminate();
@@ -123,15 +123,19 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
 
     const t0 = performance.now();
     const json = await new Promise((resolve) => {
-      const req = worker.request("http://localhost/hi", {}, (resp) => {
-        const body: any[] = [];
-        resp.on("data", (chunk) => {
-          body.push(chunk);
-        });
-        resp.on("end", () => {
-          resolve(JSON.parse(Buffer.concat(body).toString()));
-        });
-      });
+      const req = worker.request(
+        "http://localhost/hi",
+        {},
+        (resp: IncomingMessage) => {
+          const body: Buffer[] = [];
+          resp.on("data", (chunk) => {
+            body.push(chunk);
+          });
+          resp.on("end", () => {
+            resolve(JSON.parse(Buffer.concat(body).toString()));
+          });
+        }
+      );
       req.end();
     });
     console.log("http request time", performance.now() - t0);
@@ -160,15 +164,15 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
           },
           method: "POST",
         },
-        (resp) => {
-          const body: any[] = [];
+        (resp: IncomingMessage) => {
+          const body: Buffer[] = [];
           resp.on("data", (chunk) => {
             body.push(chunk);
           });
           resp.on("end", () => {
             resolve(Buffer.concat(body).toString());
           });
-        },
+        }
       );
       req.on("error", reject);
       req.write(`data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`);
@@ -179,15 +183,15 @@ describe("DenoHTTPWorker – basic", { timeout: 1000 }, () => {
       const req = worker.request(
         "https://localhost:1234",
         { headers: {} },
-        (resp) => {
-          const body: any[] = [];
+        (resp: IncomingMessage) => {
+          const body: Buffer[] = [];
           resp.on("data", (chunk) => {
             body.push(chunk);
           });
           resp.on("end", () => {
             resolve(Buffer.concat(body).toString());
           });
-        },
+        }
       );
       req.end();
     });

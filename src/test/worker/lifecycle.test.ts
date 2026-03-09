@@ -5,7 +5,7 @@ import { jsonRequest } from "../helpers/worker.js";
 
 test("EarlyExitDenoHTTPWorkerError", () => {
   expect(
-    new EarlyExitDenoHTTPWorkerError("Test", "", "hi", 10, "SIGKILL"),
+    new EarlyExitDenoHTTPWorkerError("Test", "", "hi", 10, "SIGKILL")
   ).toHaveProperty("signal", "SIGKILL");
 });
 
@@ -19,7 +19,7 @@ describe("DenoHTTPWorker – lifecycle", { timeout: 1000 }, () => {
           return Response.json({ error: error.message }, { status: 500 })
         }}
       `,
-      { printOutput: true },
+      { printOutput: true }
     );
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
@@ -44,7 +44,7 @@ describe("DenoHTTPWorker – lifecycle", { timeout: 1000 }, () => {
           return Response.json({ error: error.message }, { status: 500 })
         }}
       `,
-      { printOutput: false },
+      { printOutput: false }
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
@@ -71,7 +71,7 @@ describe("DenoHTTPWorker – lifecycle", { timeout: 1000 }, () => {
           return Response.json({ error: error.message }, { status: 500 })
         }}
       `,
-      { printOutput: false },
+      { printOutput: false }
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
@@ -96,7 +96,7 @@ describe("DenoHTTPWorker – lifecycle", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url })
         }}
       `,
-      { printOutput: true },
+      { printOutput: true }
     );
 
     let logs = "";

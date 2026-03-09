@@ -10,7 +10,9 @@ declare const Bun: {
 
 class BunAdapterServer implements AdapterServer {
   #handler: RequestHandler;
-  #server: { port: number; stop(closeActiveConnections?: boolean): void } | undefined;
+  #server:
+    | { port: number; stop(closeActiveConnections?: boolean): void }
+    | undefined;
 
   constructor(handler: RequestHandler) {
     this.#handler = handler;

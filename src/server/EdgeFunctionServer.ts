@@ -23,12 +23,9 @@ const SERVE_BOOTSTRAP_PATH = path.resolve(
 
 const ENTRYPOINT_NAMES = ["index.ts", "index.tsx", "index.js", "index.mjs"];
 
-const SECRET_KEY_PATTERN =
-  /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
+const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
 
-function filterSecretValues(
-  env: Record<string, string>
-): string[] {
+function filterSecretValues(env: Record<string, string>): string[] {
   return Object.entries(env)
     .filter(([key]) => SECRET_KEY_PATTERN.test(key))
     .map(([, value]) => value);
@@ -97,10 +94,13 @@ export class EdgeFunctionServer {
     this.#server = adapter.createServer((request) =>
       this.#handleRequest(request).catch((err) => {
         this.#options.onFunctionError?.("unknown", err);
-        return new Response(JSON.stringify({ error: "Internal Server Error" }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ error: "Internal Server Error" }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       })
     );
 
@@ -265,9 +265,7 @@ export class EdgeFunctionServer {
           }
           const body = new ReadableStream({
             start(controller) {
-              proxyRes.on("data", (chunk: Buffer) =>
-                controller.enqueue(chunk)
-              );
+              proxyRes.on("data", (chunk: Buffer) => controller.enqueue(chunk));
               proxyRes.on("end", () => controller.close());
               proxyRes.on("error", (err) => controller.error(err));
             },

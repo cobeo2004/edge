@@ -9,7 +9,11 @@ declare const Deno: {
   }): { addr: { port: number }; shutdown(): Promise<void> };
 
   serve(
-    options: { port: number; hostname: string; onListen?: (addr: { port: number; hostname: string }) => void },
+    options: {
+      port: number;
+      hostname: string;
+      onListen?: (addr: { port: number; hostname: string }) => void;
+    },
     handler: (req: Request) => Promise<Response>
   ): { addr: { port: number }; shutdown(): Promise<void> };
 };
@@ -28,9 +32,8 @@ class DenoAdapterServer implements AdapterServer {
   }
 
   async listen(port: number, hostname: string): Promise<void> {
-    this.#server = Deno.serve(
-      { port, hostname, onListen: () => {} },
-      (req) => this.#handler(req)
+    this.#server = Deno.serve({ port, hostname, onListen: () => {} }, (req) =>
+      this.#handler(req)
     );
   }
 

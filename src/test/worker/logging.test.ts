@@ -18,7 +18,7 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
         onLog: (level, source, message) => {
           logs.push({ level, source, message });
         },
-      },
+      }
     );
     await jsonRequest(worker, "http://localhost/");
     // Give readline a moment to flush
@@ -27,13 +27,13 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
 
     expect(
       logs.some(
-        (l) => l.source === "stdout" && l.message.includes("stdout-line"),
-      ),
+        (l) => l.source === "stdout" && l.message.includes("stdout-line")
+      )
     ).toBe(true);
     expect(
       logs.some(
-        (l) => l.source === "stderr" && l.message.includes("stderr-line"),
-      ),
+        (l) => l.source === "stderr" && l.message.includes("stderr-line")
+      )
     ).toBe(true);
   });
 
@@ -52,7 +52,7 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
         onLog: (level, source, message) => {
           logs.push({ level, source, message });
         },
-      },
+      }
     );
     await jsonRequest(worker, "http://localhost/");
     await new Promise((r) => setTimeout(r, 100));
@@ -61,8 +61,8 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
     expect(logs.some((l) => l.source === "stdout")).toBe(false);
     expect(
       logs.some(
-        (l) => l.source === "stderr" && l.message.includes("stderr-visible"),
-      ),
+        (l) => l.source === "stderr" && l.message.includes("stderr-visible")
+      )
     ).toBe(true);
   });
 
@@ -79,7 +79,7 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
         onLog: (level, source, message) => {
           logs.push({ level, source, message });
         },
-      },
+      }
     );
     await jsonRequest(worker, "http://localhost/");
     worker.terminate();
@@ -87,8 +87,8 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
     expect(
       logs.some(
         (l) =>
-          l.source === "command" && l.message.includes("Spawning deno process"),
-      ),
+          l.source === "command" && l.message.includes("Spawning deno process")
+      )
     ).toBe(true);
   });
 
@@ -96,10 +96,10 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
     const logs: string[] = [];
     const origLog = console.log;
     const origErr = console.error;
-    console.log = (...args: any[]) => {
+    console.log = (...args: unknown[]) => {
       logs.push(args.join(" "));
     };
-    console.error = (...args: any[]) => {
+    console.error = (...args: unknown[]) => {
       logs.push(args.join(" "));
     };
     try {
@@ -110,14 +110,14 @@ describe("DenoHTTPWorker – logLevel", { timeout: 1000 }, () => {
             return Response.json({ ok: true });
           }}
           `,
-        { printOutput: true },
+        { printOutput: true }
       );
       await jsonRequest(worker, "http://localhost/");
       await new Promise((r) => setTimeout(r, 100));
       worker.terminate();
 
       expect(
-        logs.some((l) => l.includes("[deno]") && l.includes("compat-test")),
+        logs.some((l) => l.includes("[deno]") && l.includes("compat-test"))
       ).toBe(true);
     } finally {
       console.log = origLog;

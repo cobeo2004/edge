@@ -10,4 +10,8 @@ export type {
   RequestHandler,
   RuntimeName,
 } from "./adapters/index.js";
-export { detectRuntime, resolveAdapter, nodeAdapter } from "./adapters/index.js";
+export {
+  detectRuntime,
+  resolveAdapter,
+  nodeAdapter,
+} from "./adapters/index.js";

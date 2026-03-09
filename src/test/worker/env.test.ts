@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { newDenoHTTPWorker } from "../../index.js";
 import { jsonRequest } from "../helpers/worker.js";
+import process from "node:process";
 
 describe("DenoHTTPWorker – env", { timeout: 15_000 }, () => {
   let worker: Awaited<ReturnType<typeof newDenoHTTPWorker>> | undefined;

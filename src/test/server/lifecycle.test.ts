@@ -3,7 +3,12 @@ import path from "node:path";
 import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
 import { newDenoHTTPWorker } from "../../worker/index.js";
 import { httpRequest } from "../helpers/http.js";
-import { FUNCTIONS_DIR, IMPORT_MAP, SERVE_BOOTSTRAP } from "../helpers/fixtures.js";
+import { Buffer } from "node:buffer";
+import {
+  FUNCTIONS_DIR,
+  IMPORT_MAP,
+  SERVE_BOOTSTRAP,
+} from "../helpers/fixtures.js";
 
 describe("EdgeFunctionServer – lifecycle", { timeout: 15_000 }, () => {
   let server: EdgeFunctionServer | undefined;

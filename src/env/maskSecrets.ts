@@ -13,9 +13,7 @@ export function createSecretMasker(
   // preventing partial masking when one secret is a substring of another.
   filtered.sort((a, b) => b.length - a.length);
 
-  const escaped = filtered.map((s) =>
-    s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  );
+  const escaped = filtered.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const pattern = new RegExp(escaped.join("|"), "g");
 
   return (message: string) => message.replace(pattern, "***");
