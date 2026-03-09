@@ -56,11 +56,15 @@ Resource limits to prevent runaway functions from consuming unbounded resources:
 
 ### Health Checks
 
-**Status:** Not started
+**Status:** Done
 
-**Planned:**
-- Periodic health-check pings to workers
-- Auto-restart unhealthy workers
+Periodic HTTP health-check pings to detect frozen/unresponsive workers:
+- `healthCheckInterval` — ms between pings (opt-in, disabled by default)
+- `healthCheckTimeout` — ms to wait for response (default 5000)
+- `healthCheckMaxFailures` — consecutive failures before restart (default 3)
+- `onWorkerUnhealthy` callback fired when a worker is restarted
+- All options available on both `DenoWorkerOptions` (worker-level) and `EdgeFunctionServerOptions` (server-level)
+- Unhealthy workers are terminated and immediately respawned
 
 ---
 
