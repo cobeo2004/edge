@@ -3,6 +3,7 @@ export type {
   DenoWorkerOptions,
   LogLevel,
   MinimalChildProcess,
+  RequestStats,
 } from "./worker/index.js";
 export {
   EarlyExitDenoHTTPWorkerError,

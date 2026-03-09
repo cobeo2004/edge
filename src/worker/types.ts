@@ -142,4 +142,31 @@ export interface DenoWorkerOptions {
    * `spawnOptions.env`.
    */
   env?: Record<string, string>;
+
+  /**
+   * Maximum heap memory in MB for the Deno V8 isolate.
+   * When exceeded, the process crashes and respawns on next request.
+   */
+  memoryLimitMb?: number;
+
+  /**
+   * Per-request timeout in ms. Aborts the request if exceeded.
+   * The worker process is NOT killed.
+   */
+  requestTimeout?: number;
+
+  /**
+   * Maximum wall-clock time in ms that this worker may run.
+   * After this, the worker is terminated and respawns on next request.
+   */
+  workerMaxDuration?: number;
+}
+
+export interface RequestStats {
+  functionName: string;
+  startTime: number;
+  endTime: number;
+  durationMs: number;
+  statusCode: number;
+  timedOut: boolean;
 }

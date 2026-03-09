@@ -6,6 +6,7 @@ import {
   type DenoHTTPWorker,
   type DenoWorkerOptions,
   type LogLevel,
+  type RequestStats,
   newDenoHTTPWorker,
 } from "../worker/index.js";
 import { loadEnvFile, createSecretMasker } from "../env/index.js";
@@ -69,6 +70,14 @@ export interface EdgeFunctionServerOptions {
   envFiles?: string[];
   /** Mask secret values in log output. Defaults to true */
   maskSecrets?: boolean;
+  /** Maximum heap memory in MB for each worker's V8 isolate */
+  memoryLimitMb?: number;
+  /** Per-request timeout in ms. Returns 504 on timeout */
+  requestTimeout?: number;
+  /** Maximum wall-clock time in ms for each worker. Worker respawns on next request */
+  workerMaxDuration?: number;
+  /** Called after each request completes with timing and status info */
+  onRequestStats?: (stats: RequestStats) => void;
 }
 
 export class EdgeFunctionServer {
@@ -81,6 +90,9 @@ export class EdgeFunctionServer {
   #debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #envBase: Record<string, string> = {};
   #secretValues: string[] = [];
+  #requestCounts = new Map<string, number>();
+  #workerSpawnTimes = new Map<string, number>();
+  #restartCounts = new Map<string, number>();
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -249,11 +261,18 @@ export class EdgeFunctionServer {
       headers[key] = value;
     });
 
+    const startTime = Date.now();
+    this.#requestCounts.set(
+      functionName,
+      (this.#requestCounts.get(functionName) ?? 0) + 1
+    );
+
     return new Promise<Response>((resolve, reject) => {
       const proxyReq = worker.request(
         rewrittenUrl,
         { method: request.method, headers },
         (proxyRes) => {
+          const statusCode = proxyRes.statusCode ?? 200;
           const responseHeaders = new Headers();
           for (const [key, value] of Object.entries(proxyRes.headers)) {
             if (value === undefined) continue;
@@ -275,16 +294,21 @@ export class EdgeFunctionServer {
               }
             }
           }
+          const emitStats = () =>
+            this.#emitStats(functionName, startTime, statusCode, false);
           const body = new ReadableStream({
             start(controller) {
               proxyRes.on("data", (chunk: Buffer) => controller.enqueue(chunk));
-              proxyRes.on("end", () => controller.close());
+              proxyRes.on("end", () => {
+                controller.close();
+                emitStats();
+              });
               proxyRes.on("error", (err) => controller.error(err));
             },
           });
           resolve(
             new Response(body, {
-              status: proxyRes.statusCode ?? 200,
+              status: statusCode,
               headers: responseHeaders,
             })
           );
@@ -293,9 +317,13 @@ export class EdgeFunctionServer {
 
       proxyReq.on("error", (err) => {
         this.#options.onFunctionError?.(functionName, err);
+        const timedOut = err.message.includes("timed out");
+        const status = timedOut ? 504 : 502;
+        const errorMsg = timedOut ? "Request timed out" : "Worker request failed";
+        this.#emitStats(functionName, startTime, status, timedOut);
         resolve(
-          new Response(JSON.stringify({ error: "Worker request failed" }), {
-            status: 502,
+          new Response(JSON.stringify({ error: errorMsg }), {
+            status,
             headers: { "Content-Type": "application/json" },
           })
         );
@@ -326,6 +354,37 @@ export class EdgeFunctionServer {
     });
   }
 
+  #emitStats(
+    functionName: string,
+    startTime: number,
+    statusCode: number,
+    timedOut: boolean
+  ): void {
+    if (!this.#options.onRequestStats) return;
+    const endTime = Date.now();
+    this.#options.onRequestStats({
+      functionName,
+      startTime,
+      endTime,
+      durationMs: endTime - startTime,
+      statusCode,
+      timedOut,
+    });
+  }
+
+  getWorkerStats(name: string): {
+    totalRequests: number;
+    uptimeMs: number;
+    restartCount: number;
+  } {
+    const spawnTime = this.#workerSpawnTimes.get(name);
+    return {
+      totalRequests: this.#requestCounts.get(name) ?? 0,
+      uptimeMs: spawnTime ? Date.now() - spawnTime : 0,
+      restartCount: this.#restartCounts.get(name) ?? 0,
+    };
+  }
+
   async #getOrCreateWorker(name: string): Promise<DenoHTTPWorker> {
     const existing = this.#workers.get(name);
     if (existing) return existing;
@@ -345,6 +404,15 @@ export class EdgeFunctionServer {
       const worker = await promise;
       this.#workers.set(name, worker);
       this.#workerPromises.delete(name);
+
+      // Track spawn time; increment restart count if not first spawn
+      if (this.#workerSpawnTimes.has(name)) {
+        this.#restartCounts.set(
+          name,
+          (this.#restartCounts.get(name) ?? 0) + 1
+        );
+      }
+      this.#workerSpawnTimes.set(name, Date.now());
 
       // Auto-remove on exit so next request respawns
       worker.addEventListener("exit", () => {
@@ -424,6 +492,15 @@ export class EdgeFunctionServer {
       env: mergedEnv,
       ...(logLevel ? { logLevel } : {}),
       ...(onLog ? { onLog } : {}),
+      ...(this.#options.memoryLimitMb
+        ? { memoryLimitMb: this.#options.memoryLimitMb }
+        : {}),
+      ...(this.#options.requestTimeout
+        ? { requestTimeout: this.#options.requestTimeout }
+        : {}),
+      ...(this.#options.workerMaxDuration
+        ? { workerMaxDuration: this.#options.workerMaxDuration }
+        : {}),
     });
   }
 

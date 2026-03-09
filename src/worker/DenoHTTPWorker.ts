@@ -38,6 +38,15 @@ export interface DenoHTTPWorker {
   addEventListener(type: "exit", listener: OnExitListener): void;
 }
 
+export interface WorkerImplOptions {
+  socketFile: string;
+  process: MinimalChildProcess;
+  stdout: Readable;
+  stderr: Readable;
+  requestTimeout?: number;
+  workerMaxDuration?: number;
+}
+
 export class DenoHTTPWorkerImpl {
   #onexitListeners: OnExitListener[];
   #process: MinimalChildProcess;
@@ -46,19 +55,23 @@ export class DenoHTTPWorkerImpl {
   #stdout: Readable;
   #terminated = false;
   #agent: http.Agent;
+  #requestTimeout?: number;
+  #maxDurationTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(
-    socketFile: string,
-    process: MinimalChildProcess,
-    stdout: Readable,
-    stderr: Readable
-  ) {
+  constructor(opts: WorkerImplOptions) {
     this.#onexitListeners = [];
-    this.#process = process;
-    this.#socketFile = socketFile;
-    this.#stderr = stderr;
-    this.#stdout = stdout;
+    this.#process = opts.process;
+    this.#socketFile = opts.socketFile;
+    this.#stderr = opts.stderr;
+    this.#stdout = opts.stdout;
+    this.#requestTimeout = opts.requestTimeout;
     this.#agent = new http.Agent({ keepAlive: true });
+
+    if (opts.workerMaxDuration) {
+      this.#maxDurationTimer = setTimeout(() => {
+        this._terminate();
+      }, opts.workerMaxDuration);
+    }
   }
 
   _terminate(code?: number, signal?: string) {
@@ -66,6 +79,10 @@ export class DenoHTTPWorkerImpl {
       return;
     }
     this.#terminated = true;
+    if (this.#maxDurationTimer) {
+      clearTimeout(this.#maxDurationTimer);
+      this.#maxDurationTimer = undefined;
+    }
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
@@ -113,7 +130,14 @@ export class DenoHTTPWorkerImpl {
     url = "http://deno";
     options.agent = this.#agent;
     options.socketPath = this.#socketFile;
-    return http.request(url, options, callback);
+    const req = http.request(url, options, callback);
+    if (this.#requestTimeout) {
+      const timeout = this.#requestTimeout;
+      req.setTimeout(timeout, () => {
+        req.destroy(new Error(`Request timed out after ${timeout}ms`));
+      });
+    }
+    return req;
   }
 
   // We send this request to Deno so that we get a live connection in the
