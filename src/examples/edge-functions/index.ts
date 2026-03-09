@@ -28,6 +28,16 @@ const server = new EdgeFunctionServer({
   workerOptions: {
     runFlags: ["--allow-net", "--allow-env", "--allow-read", "--allow-write"],
   },
+  // Execution limits
+  memoryLimitMb: 128, // 128 MB heap per worker
+  requestTimeout: 30_000, // 30s per-request timeout (504 on exceed)
+  workerMaxDuration: 600_000, // 10 min max worker lifetime
+  // Request stats callback
+  onRequestStats: (stats) => {
+    console.log(
+      `  [stats] ${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})${stats.timedOut ? " TIMED OUT" : ""}`
+    );
+  },
   onFunctionReady: (name) => console.log(`  Function "${name}" is ready`),
   onFunctionError: (name, err) =>
     console.error(`  Function "${name}" error:`, err.message),

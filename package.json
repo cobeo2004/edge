@@ -1,6 +1,6 @@
 {
   "name": "@cobeo2004/edge",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Securely spawn Deno workers from Node.js",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,7 +28,7 @@
   "engines": {
     "node": "20 || 22 || 24"
   },
-  "author": "Val Town",
+  "author": "Val Town (@val-town) & Simon Nguyen (@cobeo2004)",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/cobeo2004/edge/issues"
@@ -38,6 +38,7 @@
     "@biomejs/biome": "^2.1.4",
     "@changesets/cli": "^2.29.8",
     "@types/node": "^24.2.0",
+    "@vitest/ui": "^3.2.4",
     "typescript": "^5.4.5",
     "vitest": "^3"
   },

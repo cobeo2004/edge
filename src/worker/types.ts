@@ -142,4 +142,50 @@ export interface DenoWorkerOptions {
    * `spawnOptions.env`.
    */
   env?: Record<string, string>;
+
+  /**
+   * Maximum heap memory in MB for the Deno V8 isolate.
+   * When exceeded, the process crashes and respawns on next request.
+   */
+  memoryLimitMb?: number;
+
+  /**
+   * Per-request timeout in ms. Aborts the request if exceeded.
+   * The worker process is NOT killed.
+   */
+  requestTimeout?: number;
+
+  /**
+   * Maximum wall-clock time in ms that this worker may run.
+   * After this, the worker is terminated and respawns on next request.
+   */
+  workerMaxDuration?: number;
+
+  /**
+   * Interval in ms between health-check pings. Health checks are disabled
+   * when not set. Only used by EdgeFunctionServer.
+   */
+  healthCheckInterval?: number;
+
+  /**
+   * Timeout in ms for each health-check ping. Defaults to 5000.
+   * Only used by EdgeFunctionServer.
+   */
+  healthCheckTimeout?: number;
+
+  /**
+   * Number of consecutive health-check failures before the worker is
+   * considered unhealthy and restarted. Defaults to 3.
+   * Only used by EdgeFunctionServer.
+   */
+  healthCheckMaxFailures?: number;
+}
+
+export interface RequestStats {
+  functionName: string;
+  startTime: number;
+  endTime: number;
+  durationMs: number;
+  statusCode: number;
+  timedOut: boolean;
 }

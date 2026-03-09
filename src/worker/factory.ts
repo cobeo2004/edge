@@ -116,6 +116,25 @@ export const newDenoHTTPWorker = async (
     _options.runFlags.push(`--allow-write=${socketFile}`);
   }
 
+  // Inject V8 memory limit flag
+  if (_options.memoryLimitMb != null) {
+    if (
+      !Number.isInteger(_options.memoryLimitMb) ||
+      _options.memoryLimitMb <= 0
+    ) {
+      throw new Error("memoryLimitMb must be a positive integer");
+    }
+    const maxOldSpaceFlag = `--max-old-space-size=${_options.memoryLimitMb}`;
+    const existingIdx = _options.runFlags.findIndex((f) =>
+      f.startsWith("--v8-flags=")
+    );
+    if (existingIdx !== -1) {
+      _options.runFlags[existingIdx] += `,${maxOldSpaceFlag}`;
+    } else {
+      _options.runFlags.push(`--v8-flags=${maxOldSpaceFlag}`);
+    }
+  }
+
   if (_options.importMapPath) {
     _options.runFlags.push(`--import-map=${_options.importMapPath}`);
   }
@@ -229,7 +248,14 @@ export const newDenoHTTPWorker = async (
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
       }
-      worker = new DenoHTTPWorkerImpl(socketFile, process, stdout, stderr);
+      worker = new DenoHTTPWorkerImpl({
+        socketFile,
+        process,
+        stdout,
+        stderr,
+        requestTimeout: _options.requestTimeout,
+        workerMaxDuration: _options.workerMaxDuration,
+      });
       running = true;
       await (worker as DenoHTTPWorkerImpl).warmRequest();
 

@@ -248,6 +248,88 @@ const mask = createSecretMasker(["my-secret-key"]);
 mask("token is my-secret-key"); // "token is ***"
 ```
 
+## Execution Limits
+
+Prevent runaway functions from consuming unbounded resources with memory caps, request timeouts, and worker lifetime limits.
+
+### Memory limit
+
+Cap V8 heap memory per worker. When exceeded, the process is OOM-killed and respawns on the next request.
+
+```ts
+const worker = await newDenoHTTPWorker(script, {
+  memoryLimitMb: 128, // 128 MB heap limit
+  runFlags: ["--allow-net"],
+});
+```
+
+### Per-request timeout
+
+Abort individual requests that take too long without killing the worker. At the server level, timed-out requests return 504.
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  requestTimeout: 30_000, // 30 seconds
+});
+```
+
+### Worker max duration
+
+Limit the total wall-clock lifetime of a worker. After the duration expires, the worker is terminated and respawns on the next request.
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  workerMaxDuration: 600_000, // 10 minutes
+});
+```
+
+### Request stats and worker stats
+
+Track per-request timing and per-worker lifecycle metrics:
+
+```ts
+import type { RequestStats } from "@cobeo2004/edge";
+
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  requestTimeout: 5000,
+  onRequestStats: (stats: RequestStats) => {
+    console.log(`${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})`);
+    if (stats.timedOut) console.warn("Request timed out!");
+  },
+});
+
+await server.start();
+
+// After handling some requests:
+const stats = server.getWorkerStats("hello");
+// { totalRequests: 42, uptimeMs: 120000, restartCount: 1 }
+```
+
+### Health checks
+
+Periodically ping workers to detect frozen or deadlocked processes. Unhealthy workers are terminated and immediately respawned.
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  healthCheckInterval: 10_000, // ping every 10 seconds
+  healthCheckTimeout: 5_000, // 5 second timeout per ping
+  healthCheckMaxFailures: 3, // restart after 3 consecutive failures
+  onWorkerUnhealthy: (name, failures) => {
+    console.warn(`Worker ${name} restarted after ${failures} failed health checks`);
+  },
+});
+```
+
+Health checks are opt-in — they only run when `healthCheckInterval` is set. Options can be set at both the server level and per-worker level (via `workerOptions`), with per-worker values taking precedence.
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -258,6 +340,9 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `importMapPath`            | `string`                           | Path to an import map JSON file                                                          |
 | `configPath`               | `string`                           | Path to a `deno.json` config file                                                        |
 | `env`                      | `Record<string, string>`           | Environment variables merged on top of `process.env`                                     |
+| `memoryLimitMb`            | `number`                           | V8 heap memory limit in MB (process crashes and respawns on OOM)                         |
+| `requestTimeout`           | `number`                           | Per-request timeout in ms (aborts request, worker stays alive)                           |
+| `workerMaxDuration`        | `number`                           | Max wall-clock lifetime in ms (worker terminates, respawns on next request)              |
 | `denoExecutable`           | `string \| string[]`               | Path to the Deno binary (default: `"deno"`)                                              |
 | `logLevel`                 | `LogLevel`                         | Logging verbosity: `"debug"`, `"info"`, `"warn"`, `"error"`, `"silent"` (default)        |
 | `onLog`                    | `(level, source, message) => void` | Custom log handler (default: `console.log`/`console.error` with `[deno]` prefix)         |
@@ -265,23 +350,34 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `printCommandAndArguments` | `boolean`                          | Log the spawned command for debugging (legacy, equivalent to `logLevel: "debug"`)        |
 | `spawnOptions`             | `SpawnOptions`                     | Options passed to `child_process.spawn`                                                  |
 | `denoBootstrapScriptPath`  | `string`                           | Custom bootstrap script (advanced)                                                       |
+| `healthCheckInterval`      | `number`                           | Interval in ms between health-check pings (disabled when not set)                        |
+| `healthCheckTimeout`       | `number`                           | Timeout in ms for each health-check ping (default: `5000`)                               |
+| `healthCheckMaxFailures`   | `number`                           | Consecutive failures before auto-restart (default: `3`)                                  |
 
 `EdgeFunctionServerOptions` additionally supports:
 
-| Option          | Type                                             | Description                                                                                     |
-| --------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `functionsDir`  | `string`                                         | Absolute path to the functions directory                                                        |
-| `port`          | `number`                                         | Port to listen on                                                                               |
-| `hostname`      | `string`                                         | Hostname to bind to (default: `"127.0.0.1"`)                                                    |
-| `adapter`       | `RuntimeName \| ServerAdapter`                   | Server adapter: `"node"`, `"bun"`, `"deno"`, or a custom `ServerAdapter` (default: auto-detect) |
-| `eagerSpawn`    | `boolean`                                        | Spawn all workers at startup (default: `false`)                                                 |
-| `hotReload`     | `boolean`                                        | Watch & restart on file changes (default: `false`)                                              |
-| `workerOptions` | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                                |
-| `logLevel`      | `LogLevel`                                       | Log level for all function workers (default: `"silent"`)                                        |
-| `onLog`         | `(functionName, level, source, message) => void` | Custom log handler with function name context (default: `[deno:${name}]` prefix)                |
-| `env`           | `Record<string, string>`                         | Environment variables applied to all workers                                                    |
-| `envFiles`      | `string[]`                                       | Additional `.env` file paths loaded at startup                                                  |
-| `maskSecrets`   | `boolean`                                        | Mask env var values in log output (default: `true`)                                             |
+| Option             | Type                                             | Description                                                                                     |
+| ------------------ | ------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `functionsDir`     | `string`                                         | Absolute path to the functions directory                                                        |
+| `port`             | `number`                                         | Port to listen on                                                                               |
+| `hostname`         | `string`                                         | Hostname to bind to (default: `"127.0.0.1"`)                                                    |
+| `adapter`          | `RuntimeName \| ServerAdapter`                   | Server adapter: `"node"`, `"bun"`, `"deno"`, or a custom `ServerAdapter` (default: auto-detect) |
+| `eagerSpawn`       | `boolean`                                        | Spawn all workers at startup (default: `false`)                                                 |
+| `hotReload`        | `boolean`                                        | Watch & restart on file changes (default: `false`)                                              |
+| `workerOptions`    | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                                |
+| `memoryLimitMb`    | `number`                                         | V8 heap memory limit in MB for all workers                                                      |
+| `requestTimeout`   | `number`                                         | Per-request timeout in ms; returns 504 on timeout                                               |
+| `workerMaxDuration`| `number`                                         | Max wall-clock lifetime in ms for each worker                                                   |
+| `onRequestStats`   | `(stats: RequestStats) => void`                  | Callback fired after each request with timing and status info                                   |
+| `logLevel`         | `LogLevel`                                       | Log level for all function workers (default: `"silent"`)                                        |
+| `onLog`            | `(functionName, level, source, message) => void` | Custom log handler with function name context (default: `[deno:${name}]` prefix)                |
+| `env`              | `Record<string, string>`                         | Environment variables applied to all workers                                                    |
+| `envFiles`         | `string[]`                                       | Additional `.env` file paths loaded at startup                                                  |
+| `maskSecrets`      | `boolean`                                        | Mask env var values in log output (default: `true`)                                             |
+| `healthCheckInterval`  | `number`                                     | Interval in ms between health-check pings (disabled when not set)                               |
+| `healthCheckTimeout`   | `number`                                     | Timeout in ms for each health-check ping (default: `5000`)                                      |
+| `healthCheckMaxFailures` | `number`                                   | Consecutive failures before auto-restart (default: `3`)                                         |
+| `onWorkerUnhealthy`  | `(name: string, consecutiveFailures: number) => void` | Called when a worker is restarted due to failed health checks                            |
 
 ## Logging
 
@@ -378,6 +474,7 @@ Alternatively, use `configPath` to point to a full `deno.json` which supports `i
 | `LogLevel`                          | Type     | `"debug" \| "info" \| "warn" \| "error" \| "silent"`            |
 | `EarlyExitDenoHTTPWorkerError`      | Class    | Error thrown when the Deno process exits unexpectedly           |
 | `MinimalChildProcess`               | Type     | Interface for the spawned child process                         |
+| `RequestStats`                      | Type     | Per-request stats: timing, status code, timeout flag            |
 | `ServerAdapter`                     | Type     | Adapter interface for pluggable HTTP servers                    |
 | `AdapterServer`                     | Type     | Server instance returned by an adapter                          |
 | `RequestHandler`                    | Type     | `(request: Request) => Promise<Response>`                       |
