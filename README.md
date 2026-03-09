@@ -311,6 +311,25 @@ const stats = server.getWorkerStats("hello");
 // { totalRequests: 42, uptimeMs: 120000, restartCount: 1 }
 ```
 
+### Health checks
+
+Periodically ping workers to detect frozen or deadlocked processes. Unhealthy workers are terminated and immediately respawned.
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  healthCheckInterval: 10_000, // ping every 10 seconds
+  healthCheckTimeout: 5_000, // 5 second timeout per ping
+  healthCheckMaxFailures: 3, // restart after 3 consecutive failures
+  onWorkerUnhealthy: (name, failures) => {
+    console.warn(`Worker ${name} restarted after ${failures} failed health checks`);
+  },
+});
+```
+
+Health checks are opt-in — they only run when `healthCheckInterval` is set. Options can be set at both the server level and per-worker level (via `workerOptions`), with per-worker values taking precedence.
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -331,6 +350,9 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `printCommandAndArguments` | `boolean`                          | Log the spawned command for debugging (legacy, equivalent to `logLevel: "debug"`)        |
 | `spawnOptions`             | `SpawnOptions`                     | Options passed to `child_process.spawn`                                                  |
 | `denoBootstrapScriptPath`  | `string`                           | Custom bootstrap script (advanced)                                                       |
+| `healthCheckInterval`      | `number`                           | Interval in ms between health-check pings (disabled when not set)                        |
+| `healthCheckTimeout`       | `number`                           | Timeout in ms for each health-check ping (default: `5000`)                               |
+| `healthCheckMaxFailures`   | `number`                           | Consecutive failures before auto-restart (default: `3`)                                  |
 
 `EdgeFunctionServerOptions` additionally supports:
 
@@ -352,6 +374,10 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `env`              | `Record<string, string>`                         | Environment variables applied to all workers                                                    |
 | `envFiles`         | `string[]`                                       | Additional `.env` file paths loaded at startup                                                  |
 | `maskSecrets`      | `boolean`                                        | Mask env var values in log output (default: `true`)                                             |
+| `healthCheckInterval`  | `number`                                     | Interval in ms between health-check pings (disabled when not set)                               |
+| `healthCheckTimeout`   | `number`                                     | Timeout in ms for each health-check ping (default: `5000`)                                      |
+| `healthCheckMaxFailures` | `number`                                   | Consecutive failures before auto-restart (default: `3`)                                         |
+| `onWorkerUnhealthy`  | `(name: string, consecutiveFailures: number) => void` | Called when a worker is restarted due to failed health checks                            |
 
 ## Logging
 
