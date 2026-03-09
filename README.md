@@ -213,9 +213,9 @@ functions/
 const server = newEdgeFunctionServer({
   functionsDir: "/path/to/functions",
   port: 3000,
-  env: { API_KEY: "my-key" },            // applied to all workers
-  envFiles: ["/path/to/extra.env"],       // additional .env files
-  maskSecrets: true,                      // mask env values in logs (default: true)
+  env: { API_KEY: "my-key" }, // applied to all workers
+  envFiles: ["/path/to/extra.env"], // additional .env files
+  maskSecrets: true, // mask env values in logs (default: true)
 });
 ```
 
@@ -224,13 +224,13 @@ const server = newEdgeFunctionServer({
 ```ts
 const worker = await newDenoHTTPWorker(script, {
   runFlags: ["--allow-net", "--allow-env"],
-  env: { MY_VAR: "value" },  // merged on top of process.env
+  env: { MY_VAR: "value" }, // merged on top of process.env
 });
 ```
 
 ### Secret masking
 
-When `maskSecrets` is enabled (the default), all env var values are automatically replaced with `***` in log output. Values shorter than 3 characters are not masked. Disable with `maskSecrets: false`.
+When `maskSecrets` is enabled (the default), environment variables whose keys contain `SECRET`, `KEY`, `TOKEN`, `PASSWORD`, `CREDENTIAL`, `AUTH`, or `PRIVATE` are automatically masked in log output by replacing their values with `***`. Values shorter than 3 characters are not masked. Disable with `maskSecrets: false`.
 
 ### Standalone utilities
 
