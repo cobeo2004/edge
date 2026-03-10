@@ -7,6 +7,21 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 > **Forked from [@valtown/deno-http-worker](https://github.com/val-town/deno-http-worker).**
 > Full credit to [Val Town](https://val.town) for the original design and implementation.
 
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [EdgeFunctionServer](#edgefunctionserver)
+- [Multi-Runtime Server Adapters](#multi-runtime-server-adapters)
+- [Environment Variables & Secrets](#environment-variables--secrets)
+- [Execution Limits](#execution-limits)
+- [Configuration](#configuration)
+- [Logging](#logging)
+- [Import Maps](#import-maps)
+- [API Reference](#api-reference)
+- [License](#license)
+
 ## Architecture
 
 ```mermaid
