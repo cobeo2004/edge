@@ -94,7 +94,7 @@ describe("EdgeFunctionServer – shared folders", { timeout: 15_000 }, () => {
       const sharedFile = path.join(FUNCTIONS_DIR, "_shared", "cors.ts");
       const original = await fsp.readFile(sharedFile, "utf-8");
       try {
-        await fsp.writeFile(sharedFile, original + "\n// touch");
+        await fsp.writeFile(sharedFile, `${original}\n//·touch`);
 
         // Wait for debounce + restart
         await new Promise((r) => setTimeout(r, 1000));
@@ -131,7 +131,7 @@ describe("EdgeFunctionServer – shared folders", { timeout: 15_000 }, () => {
       const sharedFile = path.join(FUNCTIONS_DIR, "_shared", "cors.ts");
       const original = await fsp.readFile(sharedFile, "utf-8");
       try {
-        await fsp.writeFile(sharedFile, original + "\n// touch");
+        await fsp.writeFile(sharedFile, `${original}\n//·touch`);
 
         // Wait for debounce window to pass
         await new Promise((r) => setTimeout(r, 500));

@@ -12,14 +12,14 @@
 
 ## File Structure
 
-| File | Role |
-|------|------|
-| `src/server/EdgeFunctionServer.ts` | All shared folder logic: scanning, import map generation, watcher changes, option, cleanup |
-| `src/test/functions/_shared/cors.ts` | Test fixture: shared module |
-| `src/test/functions/_shared/db/client.ts` | Test fixture: nested shared module |
-| `src/test/functions/shared-test/index.ts` | Test fixture: function that imports from `_shared/` via bare specifier |
-| `src/test/server/shared-folders.test.ts` | Tests for all shared folder behavior |
-| `src/test/helpers/fixtures.ts` | No changes needed — `FUNCTIONS_DIR` already covers `_shared/` as a subdirectory |
+| File                                      | Role                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `src/server/EdgeFunctionServer.ts`        | All shared folder logic: scanning, import map generation, watcher changes, option, cleanup |
+| `src/test/functions/_shared/cors.ts`      | Test fixture: shared module                                                                |
+| `src/test/functions/_shared/db/client.ts` | Test fixture: nested shared module                                                         |
+| `src/test/functions/shared-test/index.ts` | Test fixture: function that imports from `_shared/` via bare specifier                     |
+| `src/test/server/shared-folders.test.ts`  | Tests for all shared folder behavior                                                       |
+| `src/test/helpers/fixtures.ts`            | No changes needed — `FUNCTIONS_DIR` already covers `_shared/` as a subdirectory            |
 
 ---
 
@@ -28,6 +28,7 @@
 ### Task 1: Test fixtures for shared folders
 
 **Files:**
+
 - Create: `src/test/functions/_shared/cors.ts`
 - Create: `src/test/functions/_shared/db/client.ts`
 - Create: `src/test/functions/shared-test/index.ts`
@@ -85,6 +86,7 @@ git commit -m "test: add shared folder test fixtures"
 ### Task 2: Skip underscore-prefixed dirs in function discovery
 
 **Files:**
+
 - Modify: `src/server/EdgeFunctionServer.ts` — `#scanFunctions()` method (lines 222-246)
 - Test: `src/test/server/shared-folders.test.ts`
 
@@ -134,6 +136,7 @@ Note: Since `_shared/` has no `index.ts`, the existing code won't list it anyway
 In `src/server/EdgeFunctionServer.ts`, add a private field and modify `#scanFunctions()`:
 
 Add field after line 106 (`#healthCheckInFlight`):
+
 ```typescript
   #sharedFolderPaths: string[] = [];
 ```
@@ -185,18 +188,18 @@ Expected: PASS
 The existing test in `src/test/server/routing.test.ts` (line 23) lists expected functions. Since we added `shared-test/`, update the expected list:
 
 ```typescript
-    expect(fns).toEqual([
-      "echo",
-      "env-test",
-      "hello",
-      "import-map-test",
-      "npm-import",
-      "oom",
-      "shared-test",
-      "slow",
-      "unresponsive",
-      "wasm-test",
-    ]);
+expect(fns).toEqual([
+  "echo",
+  "env-test",
+  "hello",
+  "import-map-test",
+  "npm-import",
+  "oom",
+  "shared-test",
+  "slow",
+  "unresponsive",
+  "wasm-test",
+]);
 ```
 
 - [ ] **Step 6: Run full server test suite to verify nothing broke**
@@ -218,6 +221,7 @@ git commit -m "feat: exclude underscore-prefixed dirs from function discovery"
 ### Task 3: Generate and merge import maps
 
 **Files:**
+
 - Modify: `src/server/EdgeFunctionServer.ts` — add `#generateImportMap()`, modify `start()` and `stop()` and `#spawnWorker()`
 - Test: `src/test/server/shared-folders.test.ts`
 
@@ -226,29 +230,29 @@ git commit -m "feat: exclude underscore-prefixed dirs from function discovery"
 Add to `src/test/server/shared-folders.test.ts`:
 
 ```typescript
-  import { httpRequest } from "../helpers/http.js";
+import { httpRequest } from "../helpers/http.js";
 
-  it("functions can import from _shared/ via bare specifier", async () => {
-    server = new EdgeFunctionServer({
-      functionsDir: FUNCTIONS_DIR,
-      port: 0,
-    });
-    await server.start();
-    const res = await httpRequest(server.port, "/shared-test");
-    expect(res.status).toBe(200);
-    expect(res.body).toBe("shared works");
+it("functions can import from _shared/ via bare specifier", async () => {
+  server = new EdgeFunctionServer({
+    functionsDir: FUNCTIONS_DIR,
+    port: 0,
   });
+  await server.start();
+  const res = await httpRequest(server.port, "/shared-test");
+  expect(res.status).toBe(200);
+  expect(res.body).toBe("shared works");
+});
 
-  it("functions can import nested shared modules via bare specifier", async () => {
-    server = new EdgeFunctionServer({
-      functionsDir: FUNCTIONS_DIR,
-      port: 0,
-    });
-    await server.start();
-    const res = await httpRequest(server.port, "/shared-test/db");
-    expect(res.status).toBe(200);
-    expect(res.body).toBe("postgres://localhost:5432/test");
+it("functions can import nested shared modules via bare specifier", async () => {
+  server = new EdgeFunctionServer({
+    functionsDir: FUNCTIONS_DIR,
+    port: 0,
   });
+  await server.start();
+  const res = await httpRequest(server.port, "/shared-test/db");
+  expect(res.status).toBe(200);
+  expect(res.body).toBe("postgres://localhost:5432/test");
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -270,7 +274,12 @@ After the `ENTRYPOINT_NAMES` constant (line 25):
 
 ```typescript
 const SHARED_FILE_EXTENSIONS = new Set([
-  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".json",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".json",
 ]);
 ```
 
@@ -372,8 +381,8 @@ Add this private method to `EdgeFunctionServer`:
 Modify `start()` (after line 113 `await this.#scanFunctions();`):
 
 ```typescript
-    await this.#scanFunctions();
-    await this.#generateImportMap();
+await this.#scanFunctions();
+await this.#generateImportMap();
 ```
 
 - [ ] **Step 8: Clean up temp import map in `stop()`**
@@ -381,11 +390,11 @@ Modify `start()` (after line 113 `await this.#scanFunctions();`):
 Add to `stop()` method, before the server close (around line 164):
 
 ```typescript
-    // Clean up generated import map
-    if (this.#importMapFile) {
-      await fsp.rm(this.#importMapFile, { force: true });
-      this.#importMapFile = undefined;
-    }
+// Clean up generated import map
+if (this.#importMapFile) {
+  await fsp.rm(this.#importMapFile, { force: true });
+  this.#importMapFile = undefined;
+}
 ```
 
 - [ ] **Step 9: Modify `#spawnWorker()` to use generated import map and add shared folder read permissions**
@@ -395,38 +404,36 @@ In `#spawnWorker()` (around line 569), modify `runFlags` and `importMapPath`.
 Replace line 571 (`const runFlags = userOptions.runFlags ?? defaultRunFlags;`) with spread copy + shared folder read permissions. Note: `factory.ts` (line 102-104) appends socket/script paths to any existing `--allow-read=` flag, so adding shared folder paths here works correctly:
 
 ```typescript
-    const defaultRunFlags = ["--allow-net", "--allow-env"];
-    const runFlags = [...(userOptions.runFlags ?? defaultRunFlags)];
+const defaultRunFlags = ["--allow-net", "--allow-env"];
+const runFlags = [...(userOptions.runFlags ?? defaultRunFlags)];
 
-    // Append shared folder read permissions
-    if (this.#sharedFolderPaths.length > 0) {
-      const sharedPaths = this.#sharedFolderPaths.join(",");
-      const existingIdx = runFlags.findIndex((f) =>
-        f.startsWith("--allow-read=")
-      );
-      if (existingIdx !== -1) {
-        runFlags[existingIdx] += `,${sharedPaths}`;
-      } else {
-        runFlags.push(`--allow-read=${sharedPaths}`);
-      }
-    }
+// Append shared folder read permissions
+if (this.#sharedFolderPaths.length > 0) {
+  const sharedPaths = this.#sharedFolderPaths.join(",");
+  const existingIdx = runFlags.findIndex((f) => f.startsWith("--allow-read="));
+  if (existingIdx !== -1) {
+    runFlags[existingIdx] += `,${sharedPaths}`;
+  } else {
+    runFlags.push(`--allow-read=${sharedPaths}`);
+  }
+}
 ```
 
 Then replace the existing `importMapPath` line (line 625) in the `newDenoHTTPWorker()` call. When `#importMapFile` exists, it already contains merged user import map entries:
 
 ```typescript
-    return newDenoHTTPWorker(new URL(`file://${entrypoint}`), {
-      ...userOptions,
-      denoBootstrapScriptPath:
-        userOptions.denoBootstrapScriptPath ?? SERVE_BOOTSTRAP_PATH,
-      runFlags,
-      importMapPath:
-        this.#importMapFile ??
-        this.#options.importMapPath ??
-        userOptions.importMapPath,
-      configPath: this.#options.configPath ?? userOptions.configPath,
-      // ... rest unchanged
-    });
+return newDenoHTTPWorker(new URL(`file://${entrypoint}`), {
+  ...userOptions,
+  denoBootstrapScriptPath:
+    userOptions.denoBootstrapScriptPath ?? SERVE_BOOTSTRAP_PATH,
+  runFlags,
+  importMapPath:
+    this.#importMapFile ??
+    this.#options.importMapPath ??
+    userOptions.importMapPath,
+  configPath: this.#options.configPath ?? userOptions.configPath,
+  // ... rest unchanged
+});
 ```
 
 Note: When `#importMapFile` exists, it already contains the merged user import map entries, so we use it instead of the raw `importMapPath`.
@@ -441,29 +448,29 @@ Expected: PASS
 Add to `src/test/server/shared-folders.test.ts`:
 
 ```typescript
-  import { IMPORT_MAP } from "../helpers/fixtures.js";
+import { IMPORT_MAP } from "../helpers/fixtures.js";
 
-  it("merges user import map with auto-generated shared entries", async () => {
-    server = new EdgeFunctionServer({
-      functionsDir: FUNCTIONS_DIR,
-      port: 0,
-      importMapPath: IMPORT_MAP,
-      workerOptions: {
-        runFlags: ["--allow-net", "--allow-env", "--allow-read"],
-      },
-    });
-    await server.start();
-
-    // User import map function still works
-    const res1 = await httpRequest(server.port, "/import-map-test");
-    expect(res1.status).toBe(200);
-    expect(res1.body).toBe("hello from edge");
-
-    // Shared folder function also works
-    const res2 = await httpRequest(server.port, "/shared-test");
-    expect(res2.status).toBe(200);
-    expect(res2.body).toBe("shared works");
+it("merges user import map with auto-generated shared entries", async () => {
+  server = new EdgeFunctionServer({
+    functionsDir: FUNCTIONS_DIR,
+    port: 0,
+    importMapPath: IMPORT_MAP,
+    workerOptions: {
+      runFlags: ["--allow-net", "--allow-env", "--allow-read"],
+    },
   });
+  await server.start();
+
+  // User import map function still works
+  const res1 = await httpRequest(server.port, "/import-map-test");
+  expect(res1.status).toBe(200);
+  expect(res1.body).toBe("hello from edge");
+
+  // Shared folder function also works
+  const res2 = await httpRequest(server.port, "/shared-test");
+  expect(res2.status).toBe(200);
+  expect(res2.body).toBe("shared works");
+});
 ```
 
 - [ ] **Step 12: Run test to verify it passes**
@@ -490,6 +497,7 @@ git commit -m "feat: auto-generate import maps for shared folders"
 ### Task 4: Add `watchSharedFolders` option and watcher changes
 
 **Files:**
+
 - Modify: `src/server/EdgeFunctionServer.ts` — `EdgeFunctionServerOptions`, `#startWatcher()`
 - Test: `src/test/server/shared-folders.test.ts`
 
@@ -581,7 +589,7 @@ Add to `src/test/server/shared-folders.test.ts`:
     const sharedFile = path.join(FUNCTIONS_DIR, "_shared", "cors.ts");
     const original = await fsp.readFile(sharedFile, "utf-8");
     try {
-      await fsp.writeFile(sharedFile, original + "\n// touch");
+      await·fsp.writeFile(sharedFile,·`${original}\n//·touch`);
 
       // Wait for debounce + restart
       await new Promise((r) => setTimeout(r, 1000));
@@ -623,7 +631,7 @@ Expected: PASS
     const sharedFile = path.join(FUNCTIONS_DIR, "_shared", "cors.ts");
     const original = await fsp.readFile(sharedFile, "utf-8");
     try {
-      await fsp.writeFile(sharedFile, original + "\n// touch");
+      await·fsp.writeFile(sharedFile,·`${original}\n//·touch`);
 
       // Wait for debounce window to pass
       await new Promise((r) => setTimeout(r, 500));
