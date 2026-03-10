@@ -50,6 +50,8 @@ export interface EdgeFunctionServerOptions {
   eagerSpawn?: boolean;
   /** Watch & restart on file changes. Default: false */
   hotReload?: boolean;
+  /** Watch shared folders and restart all workers on change. Only effective when hotReload is true. Default: true */
+  watchSharedFolders?: boolean;
   /** Called when a function worker is ready */
   onFunctionReady?: (name: string) => void;
   /** Called when a function worker encounters an error */
@@ -769,26 +771,43 @@ export class EdgeFunctionServer {
   }
 
   #startWatcher(): void {
+    const watchShared = this.#options.watchSharedFolders !== false;
+
     this.#watcher = fs.watch(
       this.#options.functionsDir,
       { recursive: true },
       (_event, filename) => {
         if (!filename) return;
-        // filename is relative to functionsDir, e.g. "hello/index.ts"
-        const functionName = filename.split(path.sep)[0]!;
+        // filename is relative to functionsDir, e.g. "hello/index.ts" or "_shared/cors.ts"
+        const topDir = filename.split(path.sep)[0]!;
+        const isSharedChange = topDir.startsWith("_");
 
-        // Debounce per function
-        const existing = this.#debounceTimers.get(functionName);
+        // Skip shared folder changes if watchSharedFolders is disabled
+        if (isSharedChange && !watchShared) return;
+
+        // Debounce key: use the top-level dir for function changes,
+        // use "__shared__" for all shared changes (so they coalesce)
+        const debounceKey = isSharedChange ? "__shared__" : topDir;
+
+        const existing = this.#debounceTimers.get(debounceKey);
         if (existing) clearTimeout(existing);
 
         this.#debounceTimers.set(
-          functionName,
+          debounceKey,
           setTimeout(async () => {
-            this.#debounceTimers.delete(functionName);
-            // Re-scan to detect new/removed functions
+            this.#debounceTimers.delete(debounceKey);
+            // Re-scan to detect new/removed functions and shared folders
             await this.#scanFunctions();
-            if (this.#workers.has(functionName)) {
-              await this.restartFunction(functionName);
+
+            if (isSharedChange) {
+              // Regenerate import map and restart all workers
+              await this.#generateImportMap();
+              const workerNames = [...this.#workers.keys()];
+              await Promise.all(
+                workerNames.map((name) => this.restartFunction(name))
+              );
+            } else if (this.#workers.has(topDir)) {
+              await this.restartFunction(topDir);
             }
           }, 200)
         );
