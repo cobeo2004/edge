@@ -5,22 +5,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type DenoHTTPWorker,
-  type DenoWorkerOptions,
-  type LogLevel,
-  type RequestStats,
   newDenoHTTPWorker,
 } from "../worker/index.js";
 import { loadEnvFile, createSecretMasker } from "../env/index.js";
-import type { AuthResult, AuthStrategy } from "../auth/types.js";
+import type { AuthResult } from "../auth/types.js";
 import { loadFunctionConfig } from "../permissions/config.js";
 import {
   BUILT_IN_PROFILES,
   resolvePermissionFlags,
 } from "../permissions/profiles.js";
 import type { FunctionConfig } from "../permissions/types.js";
-import type { AdapterServer, ServerAdapter } from "./adapters/types.js";
-import type { RuntimeName } from "./adapters/detect.js";
+import type { AdapterServer } from "./adapters/types.js";
 import { resolveAdapter } from "./adapters/detect.js";
+import type { EdgeFunctionServerOptions } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,79 +44,6 @@ function filterSecretValues(env: Record<string, string>): string[] {
   return Object.entries(env)
     .filter(([key]) => SECRET_KEY_PATTERN.test(key))
     .map(([, value]) => value);
-}
-
-export interface EdgeFunctionServerOptions {
-  /** Absolute path to the functions directory */
-  functionsDir: string;
-  /** Port to listen on */
-  port: number;
-  /** Hostname to bind to. Defaults to "127.0.0.1" */
-  hostname?: string;
-  /** Options forwarded to each DenoHTTPWorker */
-  workerOptions?: Partial<DenoWorkerOptions>;
-  /** Spawn all workers at startup. Default: false */
-  eagerSpawn?: boolean;
-  /** Watch & restart on file changes. Default: false */
-  hotReload?: boolean;
-  /** Watch shared folders and restart all workers on change. Only effective when hotReload is true. Default: true */
-  watchSharedFolders?: boolean;
-  /** Called when a function worker is ready */
-  onFunctionReady?: (name: string) => void;
-  /** Called when a function worker encounters an error */
-  onFunctionError?: (name: string, error: Error) => void;
-  /** Path to an import map file passed to each worker */
-  importMapPath?: string;
-  /** Path to a Deno config file (deno.json) passed to each worker */
-  configPath?: string;
-  /** Server adapter: 'node' | 'bun' | 'deno' or a custom ServerAdapter. Default: auto-detect */
-  adapter?: RuntimeName | ServerAdapter;
-  /** Log level for worker output. Defaults to "silent" */
-  logLevel?: LogLevel;
-  /** Custom log handler for worker output, receives the function name */
-  onLog?: (
-    functionName: string,
-    level: LogLevel,
-    source: "stdout" | "stderr" | "command",
-    message: string
-  ) => void;
-  /** Environment variables applied to all workers */
-  env?: Record<string, string>;
-  /** Additional .env file paths loaded at start() */
-  envFiles?: string[];
-  /** Mask secret values in log output. Defaults to true */
-  maskSecrets?: boolean;
-  /** Maximum heap memory in MB for each worker's V8 isolate */
-  memoryLimitMb?: number;
-  /** Per-request timeout in ms. Returns 504 on timeout */
-  requestTimeout?: number;
-  /** Maximum wall-clock time in ms for each worker. Worker respawns on next request */
-  workerMaxDuration?: number;
-  /** Called after each request completes with timing and status info */
-  onRequestStats?: (stats: RequestStats) => void;
-  /** Interval in ms between health-check pings. Disabled when not set */
-  healthCheckInterval?: number;
-  /** Timeout in ms for each health-check ping. Defaults to 5000 */
-  healthCheckTimeout?: number;
-  /** Consecutive failures before auto-restart. Defaults to 3 */
-  healthCheckMaxFailures?: number;
-  /** Called when a worker is restarted due to failed health checks */
-  onWorkerUnhealthy?: (name: string, consecutiveFailures: number) => void;
-  /** Auth strategy instance. When set, all requests require authentication unless opted out */
-  auth?: AuthStrategy;
-  /** Custom response on auth failure. Default: 401 JSON */
-  onAuthFailure?: (
-    request: Request,
-    error: AuthResult
-  ) => Response | Promise<Response>;
-  /** Functions that skip auth entirely (server-level override) */
-  publicFunctions?: string[];
-  /** Default permission profile for all functions. Default: "standard" */
-  defaultPermissionProfile?: string;
-  /** Per-function permission overrides. Takes priority over function.json */
-  functionPermissions?: Record<string, string | string[]>;
-  /** Custom named permission profiles (merged with built-ins) */
-  permissionProfiles?: Record<string, string[]>;
 }
 
 export class EdgeFunctionServer {
