@@ -129,6 +129,24 @@ describe("EdgeFunctionServer – auth", { timeout: 15_000 }, () => {
     expect(body.custom).toBe(true);
   });
 
+  it("skips auth for functions with auth: false in function.json", async () => {
+    server = new EdgeFunctionServer({
+      functionsDir: FUNCTIONS_DIR,
+      port: 0,
+      auth: new JWTStrategy({ secret: SECRET }),
+    });
+    await server.start();
+
+    // public function has auth: false in function.json
+    const res = await httpRequest(server.port, "/public");
+    expect(res.status).toBe(200);
+    expect(res.body).toBe("Public endpoint");
+
+    // hello function still requires auth
+    const res2 = await httpRequest(server.port, "/hello");
+    expect(res2.status).toBe(401);
+  });
+
   it("uses custom AuthStrategy implementation", async () => {
     const apiKeyStrategy: AuthStrategy = {
       async extractCredentials(request: Request) {
