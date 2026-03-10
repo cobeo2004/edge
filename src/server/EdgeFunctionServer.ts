@@ -5,7 +5,7 @@ import { resolveAdapter } from "./adapters/detect.js";
 import { FunctionRegistry } from "./FunctionRegistry.js";
 import { WorkerPool } from "./WorkerPool.js";
 import { AuthMiddleware } from "./AuthMiddleware.js";
-import { RequestHandler } from "./RequestHandler.js";
+import { WorkerRequestHandler } from "./WorkerRequestHandler.js";
 import { FileWatcher } from "./FileWatcher.js";
 import type {
   EdgeFunctionServerOptions,
@@ -16,8 +16,8 @@ import type {
 export class EdgeFunctionServer {
   #options: EdgeFunctionServerOptions;
   #registry: FunctionRegistry;
-  #pool!: WorkerPool;
-  #requestHandler!: RequestHandler;
+  #pool: WorkerPool | undefined;
+  #requestHandler: WorkerRequestHandler | undefined;
   #fileWatcher: FileWatcher | undefined;
   #server: AdapterServer | undefined;
   #middleware: Middleware[] = [];
@@ -35,7 +35,7 @@ export class EdgeFunctionServer {
     await this.#registry.scan();
     await this.#registry.generateImportMap(
       this.#options.importMapPath,
-      this.#options.configPath
+      this.#options.configPath,
     );
     const { envBase, secretValues } = await this.#loadEnv();
 
@@ -46,7 +46,7 @@ export class EdgeFunctionServer {
       secretValues,
     });
 
-    this.#requestHandler = new RequestHandler(this.#pool, {
+    this.#requestHandler = new WorkerRequestHandler(this.#pool, {
       onFunctionError: this.#options.onFunctionError,
       onRequestStats: this.#options.onRequestStats,
     });
@@ -73,9 +73,9 @@ export class EdgeFunctionServer {
           {
             status: 500,
             headers: { "Content-Type": "application/json" },
-          }
+          },
         );
-      })
+      }),
     );
 
     const hostname = this.#options.hostname ?? "127.0.0.1";
@@ -90,8 +90,8 @@ export class EdgeFunctionServer {
         async (name) => {
           // Re-scan to detect new/removed functions
           await this.#registry.scan();
-          if (this.#pool.getActiveWorkerNames().includes(name)) {
-            await this.#pool.restart(name);
+          if (this.#pool!.getActiveWorkerNames().includes(name)) {
+            await this.#pool!.restart(name);
           }
         },
         async () => {
@@ -100,11 +100,11 @@ export class EdgeFunctionServer {
           // Regenerate import map and restart all workers
           await this.#registry.generateImportMap(
             this.#options.importMapPath,
-            this.#options.configPath
+            this.#options.configPath,
           );
-          const workerNames = this.#pool.getActiveWorkerNames();
-          await Promise.all(workerNames.map((n) => this.#pool.restart(n)));
-        }
+          const workerNames = this.#pool!.getActiveWorkerNames();
+          await Promise.all(workerNames.map((n) => this.#pool!.restart(n)));
+        },
       );
     }
 
@@ -112,7 +112,7 @@ export class EdgeFunctionServer {
       await Promise.all(
         this.#registry
           .listFunctions()
-          .map((name) => this.#pool.getOrCreate(name))
+          .map((name) => this.#pool!.getOrCreate(name)),
       );
     }
   }
@@ -144,6 +144,7 @@ export class EdgeFunctionServer {
   }
 
   async restartFunction(name: string): Promise<void> {
+    if (!this.#pool) throw new Error("Server is not started");
     await this.#pool.restart(name);
   }
 
@@ -152,6 +153,7 @@ export class EdgeFunctionServer {
     uptimeMs: number;
     restartCount: number;
   } {
+    if (!this.#pool) throw new Error("Server is not started");
     return this.#pool.getStats(name);
   }
 
@@ -175,8 +177,8 @@ export class EdgeFunctionServer {
           new Response(JSON.stringify({ error: "No handler" }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
-          })
-        )
+          }),
+        ),
     );
     return run();
   }
@@ -187,7 +189,7 @@ export class EdgeFunctionServer {
   }> {
     // Layer 2: global .env
     const globalEnv = await loadEnvFile(
-      path.join(this.#options.functionsDir, ".env")
+      path.join(this.#options.functionsDir, ".env"),
     );
 
     // Layer 3: additional envFiles
@@ -218,7 +220,7 @@ export class EdgeFunctionServer {
 
 /** Convenience factory */
 export function newEdgeFunctionServer(
-  options: EdgeFunctionServerOptions
+  options: EdgeFunctionServerOptions,
 ): EdgeFunctionServer {
   return new EdgeFunctionServer(options);
 }
