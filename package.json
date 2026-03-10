@@ -44,5 +44,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "jose": "^6.2.1"
   }
 }
