@@ -1,6 +1,4 @@
 import fs from "node:fs";
-import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -9,15 +7,11 @@ import {
 } from "../worker/index.js";
 import { loadEnvFile, createSecretMasker } from "../env/index.js";
 import type { AuthResult } from "../auth/types.js";
-import { loadFunctionConfig } from "../permissions/config.js";
-import {
-  BUILT_IN_PROFILES,
-  resolvePermissionFlags,
-} from "../permissions/profiles.js";
-import type { FunctionConfig } from "../permissions/types.js";
+import { resolvePermissionFlags } from "../permissions/profiles.js";
 import type { AdapterServer } from "./adapters/types.js";
 import { resolveAdapter } from "./adapters/detect.js";
 import type { EdgeFunctionServerOptions } from "./types.js";
+import { FunctionRegistry } from "./FunctionRegistry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,17 +20,6 @@ const SERVE_BOOTSTRAP_PATH = path.resolve(
   __dirname,
   "../../deno-bootstrap/serve.ts"
 );
-
-const ENTRYPOINT_NAMES = ["index.ts", "index.tsx", "index.js", "index.mjs"];
-
-const SHARED_FILE_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".json",
-]);
 
 const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
 
@@ -50,7 +33,7 @@ export class EdgeFunctionServer {
   #options: EdgeFunctionServerOptions;
   #workers = new Map<string, DenoHTTPWorker>();
   #workerPromises = new Map<string, Promise<DenoHTTPWorker>>();
-  #functions = new Map<string, string>();
+  #registry: FunctionRegistry;
   #server: AdapterServer | undefined;
   #watcher: fs.FSWatcher | undefined;
   #debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -62,17 +45,19 @@ export class EdgeFunctionServer {
   #healthCheckTimers = new Map<string, ReturnType<typeof setInterval>>();
   #healthCheckFailures = new Map<string, number>();
   #healthCheckInFlight = new Set<string>();
-  #functionConfigs = new Map<string, FunctionConfig>();
-  #sharedFolderPaths: string[] = [];
-  #importMapFile: string | undefined;
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
+    this.#registry = new FunctionRegistry({
+      functionsDir: options.functionsDir,
+      permissionProfiles: options.permissionProfiles,
+      onFunctionError: options.onFunctionError,
+    });
   }
 
   async start(): Promise<void> {
-    await this.#scanFunctions();
-    await this.#generateImportMap();
+    await this.#registry.scan();
+    await this.#registry.generateImportMap(this.#options.importMapPath, this.#options.configPath);
     await this.#loadEnv();
 
     const adapter = await resolveAdapter(this.#options.adapter);
@@ -98,7 +83,7 @@ export class EdgeFunctionServer {
 
     if (this.#options.eagerSpawn) {
       await Promise.all(
-        [...this.#functions.keys()].map((name) => this.#getOrCreateWorker(name))
+        this.#registry.listFunctions().map((name) => this.#getOrCreateWorker(name))
       );
     }
   }
@@ -124,10 +109,7 @@ export class EdgeFunctionServer {
     this.#workerPromises.clear();
 
     // Clean up generated import map
-    if (this.#importMapFile) {
-      await fsp.rm(this.#importMapFile, { force: true });
-      this.#importMapFile = undefined;
-    }
+    await this.#registry.cleanupImportMap();
 
     if (this.#server) {
       await this.#server.close();
@@ -143,7 +125,7 @@ export class EdgeFunctionServer {
   }
 
   listFunctions(): string[] {
-    return [...this.#functions.keys()].sort();
+    return this.#registry.listFunctions();
   }
 
   async restartFunction(name: string): Promise<void> {
@@ -154,7 +136,7 @@ export class EdgeFunctionServer {
       this.#workers.delete(name);
     }
     this.#workerPromises.delete(name);
-    if (this.#functions.has(name)) {
+    if (this.#registry.hasFunction(name)) {
       await this.#getOrCreateWorker(name);
     }
   }
@@ -187,188 +169,12 @@ export class EdgeFunctionServer {
     }
   }
 
-  async #scanFunctions(): Promise<void> {
-    this.#functions.clear();
-    this.#functionConfigs.clear();
-    this.#sharedFolderPaths = [];
-    let entries: string[];
-    try {
-      entries = await fsp.readdir(this.#options.functionsDir);
-    } catch {
-      return;
-    }
-
-    // Build lookup of all known profile names for validation
-    const allProfiles: Record<string, string[]> = {
-      ...BUILT_IN_PROFILES,
-      ...this.#options.permissionProfiles,
-    };
-
-    for (const entry of entries) {
-      const dirPath = path.join(this.#options.functionsDir, entry);
-      const stat = await fsp.stat(dirPath);
-      if (!stat.isDirectory()) continue;
-
-      // Collect underscore-prefixed dirs as shared folders, skip function discovery
-      if (entry.startsWith("_")) {
-        this.#sharedFolderPaths.push(dirPath);
-        continue;
-      }
-
-      for (const name of ENTRYPOINT_NAMES) {
-        const candidate = path.join(dirPath, name);
-        try {
-          await fsp.stat(candidate);
-          this.#functions.set(entry, candidate);
-          const fnConfig = await loadFunctionConfig(dirPath, (err) => {
-            this.#options.onFunctionError?.(
-              entry,
-              new Error(`Invalid function.json: ${err.message}`)
-            );
-          });
-          this.#functionConfigs.set(entry, fnConfig);
-
-          // Validate permission profile name at scan time
-          if (typeof fnConfig.permissions === "string") {
-            if (!allProfiles[fnConfig.permissions]) {
-              this.#options.onFunctionError?.(
-                entry,
-                new Error(
-                  `Unknown permission profile "${fnConfig.permissions}" in function.json`
-                )
-              );
-            }
-          }
-
-          break;
-        } catch {
-          // try next
-        }
-      }
-    }
-  }
-
-  async #scanSharedFiles(): Promise<Map<string, string>> {
-    const entries = new Map<string, string>();
-
-    const scan = async (dir: string, prefix: string): Promise<void> => {
-      let items: string[];
-      try {
-        items = await fsp.readdir(dir);
-      } catch {
-        return;
-      }
-      for (const item of items) {
-        const fullPath = path.join(dir, item);
-        const stat = await fsp.stat(fullPath);
-        if (stat.isDirectory()) {
-          await scan(fullPath, `${prefix}${item}/`);
-        } else if (SHARED_FILE_EXTENSIONS.has(path.extname(item))) {
-          const key = `${prefix}${item}`;
-          const fileUrl = `file://${fullPath}`;
-          entries.set(key, fileUrl);
-        }
-      }
-    };
-
-    for (const folderPath of this.#sharedFolderPaths) {
-      const folderName = path.basename(folderPath);
-      await scan(folderPath, `${folderName}/`);
-    }
-
-    return entries;
-  }
-
-  async #generateImportMap(): Promise<void> {
-    // Clean up previous temp file (from hot-reload regeneration)
-    if (this.#importMapFile) {
-      await fsp.rm(this.#importMapFile, { force: true });
-      this.#importMapFile = undefined;
-    }
-
-    const sharedEntries = await this.#scanSharedFiles();
-    if (
-      sharedEntries.size === 0 &&
-      !this.#options.importMapPath &&
-      !this.#options.configPath
-    )
-      return;
-
-    // Start with auto-generated entries
-    const imports: Record<string, string> = {};
-    for (const [key, value] of sharedEntries) {
-      imports[key] = value;
-    }
-
-    // Merge user import map (user takes precedence, errors propagate — fail fast)
-    let scopes: Record<string, Record<string, string>> | undefined;
-    if (this.#options.importMapPath) {
-      const content = await fsp.readFile(this.#options.importMapPath, "utf-8");
-      const parsed = JSON.parse(content);
-      const baseDir = path.dirname(path.resolve(this.#options.importMapPath));
-      if (parsed.imports) {
-        for (const [key, value] of Object.entries(parsed.imports)) {
-          if (
-            typeof value === "string" &&
-            (value.startsWith("./") || value.startsWith("../"))
-          ) {
-            imports[key] = `file://${path.resolve(baseDir, value)}`;
-          } else {
-            imports[key] = value as string;
-          }
-        }
-      }
-      if (parsed.scopes) {
-        scopes = parsed.scopes;
-      }
-    }
-
-    // Merge config imports if present (errors caught — configPath may not contain imports)
-    if (this.#options.configPath) {
-      try {
-        const content = await fsp.readFile(this.#options.configPath, "utf-8");
-        const parsed = JSON.parse(content);
-        const baseDir = path.dirname(path.resolve(this.#options.configPath));
-        if (parsed.imports) {
-          for (const [key, value] of Object.entries(parsed.imports)) {
-            if (
-              typeof value === "string" &&
-              (value.startsWith("./") || value.startsWith("../"))
-            ) {
-              imports[key] = `file://${path.resolve(baseDir, value)}`;
-            } else {
-              imports[key] = value as string;
-            }
-          }
-        }
-        if (parsed.scopes && !scopes) {
-          scopes = parsed.scopes;
-        }
-      } catch {
-        // configPath may not contain import map fields — skip gracefully
-      }
-    }
-
-    const importMap: Record<string, unknown> = { imports };
-    if (scopes) {
-      importMap.scopes = scopes;
-    }
-
-    // Write to temp file
-    const tmpFile = path.join(
-      os.tmpdir(),
-      `deno-edge-import-map-${crypto.randomUUID()}.json`
-    );
-    await fsp.writeFile(tmpFile, JSON.stringify(importMap, null, 2));
-    this.#importMapFile = tmpFile;
-  }
-
   async #handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const segments = url.pathname.split("/").filter(Boolean);
     const functionName = segments[0];
 
-    if (!functionName || !this.#functions.has(functionName)) {
+    if (!functionName || !this.#registry.hasFunction(functionName)) {
       return new Response(JSON.stringify({ error: "Function not found" }), {
         status: 404,
         headers: { "Content-Type": "application/json" },
@@ -380,7 +186,7 @@ export class EdgeFunctionServer {
     if (this.#options.auth) {
       const isPublic =
         this.#options.publicFunctions?.includes(functionName) ||
-        this.#functionConfigs.get(functionName)?.auth === false;
+        this.#registry.getFunctionConfig(functionName)?.auth === false;
 
       if (!isPublic) {
         let credentials: string | null;
@@ -697,7 +503,7 @@ export class EdgeFunctionServer {
           this.#workers.delete(name);
         }
         this.#workerPromises.delete(name);
-        if (this.#functions.has(name)) {
+        if (this.#registry.hasFunction(name)) {
           this.#getOrCreateWorker(name).catch((err) => {
             this.#options.onFunctionError?.(name, err as Error);
           });
@@ -737,7 +543,7 @@ export class EdgeFunctionServer {
     const inflight = this.#workerPromises.get(name);
     if (inflight) return inflight;
 
-    const entrypoint = this.#functions.get(name);
+    const entrypoint = this.#registry.getEntrypoint(name);
     if (!entrypoint) {
       throw new Error(`Function "${name}" not found`);
     }
@@ -784,7 +590,7 @@ export class EdgeFunctionServer {
       runFlags = [...userOptions.runFlags];
     } else {
       const serverOverride = this.#options.functionPermissions?.[name];
-      const fnConfig = this.#functionConfigs.get(name);
+      const fnConfig = this.#registry.getFunctionConfig(name);
       const permissionValue = serverOverride ?? fnConfig?.permissions;
       runFlags = [
         ...resolvePermissionFlags(permissionValue, {
@@ -795,8 +601,9 @@ export class EdgeFunctionServer {
     }
 
     // Append shared folder read permissions
-    if (this.#sharedFolderPaths.length > 0) {
-      const sharedPaths = this.#sharedFolderPaths.join(",");
+    const sharedFolderPaths = this.#registry.getSharedFolderPaths();
+    if (sharedFolderPaths.length > 0) {
+      const sharedPaths = sharedFolderPaths.join(",");
       const hasFullRead =
         runFlags.includes("--allow-read") || runFlags.includes("--allow-all");
       if (!hasFullRead) {
@@ -864,7 +671,7 @@ export class EdgeFunctionServer {
         userOptions.denoBootstrapScriptPath ?? SERVE_BOOTSTRAP_PATH,
       runFlags,
       importMapPath:
-        this.#importMapFile ??
+        this.#registry.getImportMapFile() ??
         this.#options.importMapPath ??
         userOptions.importMapPath,
       configPath: this.#options.configPath ?? userOptions.configPath,
@@ -906,11 +713,11 @@ export class EdgeFunctionServer {
           setTimeout(async () => {
             this.#debounceTimers.delete(debounceKey);
             // Re-scan to detect new/removed functions and shared folders
-            await this.#scanFunctions();
+            await this.#registry.scan();
 
             if (isSharedChange) {
               // Regenerate import map and restart all workers
-              await this.#generateImportMap();
+              await this.#registry.generateImportMap(this.#options.importMapPath, this.#options.configPath);
               const workerNames = [...this.#workers.keys()];
               await Promise.all(
                 workerNames.map((name) => this.restartFunction(name))
