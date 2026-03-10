@@ -1,25 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  type DenoHTTPWorker,
-  newDenoHTTPWorker,
-} from "../worker/index.js";
-import { loadEnvFile, createSecretMasker } from "../env/index.js";
+import type { DenoHTTPWorker } from "../worker/index.js";
+import { loadEnvFile } from "../env/index.js";
 import type { AuthResult } from "../auth/types.js";
-import { resolvePermissionFlags } from "../permissions/profiles.js";
 import type { AdapterServer } from "./adapters/types.js";
 import { resolveAdapter } from "./adapters/detect.js";
 import type { EdgeFunctionServerOptions } from "./types.js";
 import { FunctionRegistry } from "./FunctionRegistry.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const SERVE_BOOTSTRAP_PATH = path.resolve(
-  __dirname,
-  "../../deno-bootstrap/serve.ts"
-);
+import { WorkerPool } from "./WorkerPool.js";
 
 const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
 
@@ -31,20 +19,13 @@ function filterSecretValues(env: Record<string, string>): string[] {
 
 export class EdgeFunctionServer {
   #options: EdgeFunctionServerOptions;
-  #workers = new Map<string, DenoHTTPWorker>();
-  #workerPromises = new Map<string, Promise<DenoHTTPWorker>>();
   #registry: FunctionRegistry;
+  #pool!: WorkerPool;
   #server: AdapterServer | undefined;
   #watcher: fs.FSWatcher | undefined;
   #debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #envBase: Record<string, string> = {};
   #secretValues: string[] = [];
-  #requestCounts = new Map<string, number>();
-  #workerSpawnTimes = new Map<string, number>();
-  #restartCounts = new Map<string, number>();
-  #healthCheckTimers = new Map<string, ReturnType<typeof setInterval>>();
-  #healthCheckFailures = new Map<string, number>();
-  #healthCheckInFlight = new Set<string>();
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -59,6 +40,13 @@ export class EdgeFunctionServer {
     await this.#registry.scan();
     await this.#registry.generateImportMap(this.#options.importMapPath, this.#options.configPath);
     await this.#loadEnv();
+
+    this.#pool = new WorkerPool({
+      registry: this.#registry,
+      serverOptions: this.#options,
+      envBase: this.#envBase,
+      secretValues: this.#secretValues,
+    });
 
     const adapter = await resolveAdapter(this.#options.adapter);
     this.#server = adapter.createServer((request) =>
@@ -83,7 +71,7 @@ export class EdgeFunctionServer {
 
     if (this.#options.eagerSpawn) {
       await Promise.all(
-        this.#registry.listFunctions().map((name) => this.#getOrCreateWorker(name))
+        this.#registry.listFunctions().map((name) => this.#pool.getOrCreate(name))
       );
     }
   }
@@ -98,15 +86,8 @@ export class EdgeFunctionServer {
     }
     this.#debounceTimers.clear();
 
-    for (const name of [...this.#healthCheckTimers.keys()]) {
-      this.#stopHealthCheck(name);
-    }
-
-    for (const worker of this.#workers.values()) {
-      worker.terminate();
-    }
-    this.#workers.clear();
-    this.#workerPromises.clear();
+    this.#pool.stopAllHealthChecks();
+    this.#pool.terminateAll();
 
     // Clean up generated import map
     await this.#registry.cleanupImportMap();
@@ -129,16 +110,7 @@ export class EdgeFunctionServer {
   }
 
   async restartFunction(name: string): Promise<void> {
-    this.#stopHealthCheck(name);
-    const existing = this.#workers.get(name);
-    if (existing) {
-      existing.terminate();
-      this.#workers.delete(name);
-    }
-    this.#workerPromises.delete(name);
-    if (this.#registry.hasFunction(name)) {
-      await this.#getOrCreateWorker(name);
-    }
+    await this.#pool.restart(name);
   }
 
   async #loadEnv(): Promise<void> {
@@ -267,7 +239,7 @@ export class EdgeFunctionServer {
 
     let worker: DenoHTTPWorker;
     try {
-      worker = await this.#getOrCreateWorker(functionName);
+      worker = await this.#pool.getOrCreate(functionName);
     } catch (err) {
       this.#options.onFunctionError?.(functionName, err as Error);
       return new Response(
@@ -293,10 +265,7 @@ export class EdgeFunctionServer {
     }
 
     const startTime = Date.now();
-    this.#requestCounts.set(
-      functionName,
-      (this.#requestCounts.get(functionName) ?? 0) + 1
-    );
+    this.#pool.incrementRequestCount(functionName);
 
     return new Promise<Response>((resolve, reject) => {
       const proxyReq = worker.request(
@@ -412,278 +381,12 @@ export class EdgeFunctionServer {
     });
   }
 
-  #resolveHealthCheckConfig(): {
-    interval: number;
-    timeout: number;
-    maxFailures: number;
-  } | null {
-    const workerOpts = this.#options.workerOptions ?? {};
-    const interval =
-      workerOpts.healthCheckInterval ?? this.#options.healthCheckInterval;
-    if (interval === undefined) return null;
-
-    return {
-      interval,
-      timeout:
-        workerOpts.healthCheckTimeout ??
-        this.#options.healthCheckTimeout ??
-        5000,
-      maxFailures:
-        workerOpts.healthCheckMaxFailures ??
-        this.#options.healthCheckMaxFailures ??
-        3,
-    };
-  }
-
-  #startHealthCheck(name: string, worker: DenoHTTPWorker): void {
-    const config = this.#resolveHealthCheckConfig();
-    if (!config) return;
-
-    this.#healthCheckFailures.set(name, 0);
-
-    const timer = setInterval(async () => {
-      // Skip if this worker has been replaced
-      if (this.#workers.get(name) !== worker) return;
-      // Skip if a health check is already in-flight for this worker
-      if (this.#healthCheckInFlight.has(name)) return;
-      this.#healthCheckInFlight.add(name);
-
-      let req: ReturnType<DenoHTTPWorker["request"]> | undefined;
-      const healthy = await new Promise<boolean>((resolve) => {
-        const timeoutId = setTimeout(() => {
-          req?.destroy();
-          resolve(false);
-        }, config.timeout);
-        try {
-          req = worker.request(
-            "http://deno/__health",
-            { method: "GET" },
-            (res) => {
-              res.on("data", () => {});
-              res.on("end", () => {
-                clearTimeout(timeoutId);
-                resolve(true);
-              });
-              res.on("error", () => {
-                clearTimeout(timeoutId);
-                resolve(false);
-              });
-            }
-          );
-          req.on("error", () => {
-            clearTimeout(timeoutId);
-            resolve(false);
-          });
-          req.end();
-        } catch {
-          clearTimeout(timeoutId);
-          resolve(false);
-        }
-      });
-
-      this.#healthCheckInFlight.delete(name);
-
-      // Worker might have been replaced while the health check was in-flight
-      if (this.#workers.get(name) !== worker) return;
-
-      if (healthy) {
-        this.#healthCheckFailures.set(name, 0);
-        return;
-      }
-
-      const failures = (this.#healthCheckFailures.get(name) ?? 0) + 1;
-      this.#healthCheckFailures.set(name, failures);
-
-      if (failures >= config.maxFailures) {
-        this.#stopHealthCheck(name);
-        this.#options.onWorkerUnhealthy?.(name, failures);
-        const existing = this.#workers.get(name);
-        if (existing) {
-          existing.terminate();
-          this.#workers.delete(name);
-        }
-        this.#workerPromises.delete(name);
-        if (this.#registry.hasFunction(name)) {
-          this.#getOrCreateWorker(name).catch((err) => {
-            this.#options.onFunctionError?.(name, err as Error);
-          });
-        }
-      }
-    }, config.interval);
-
-    this.#healthCheckTimers.set(name, timer);
-  }
-
-  #stopHealthCheck(name: string): void {
-    const timer = this.#healthCheckTimers.get(name);
-    if (timer) {
-      clearInterval(timer);
-      this.#healthCheckTimers.delete(name);
-    }
-    this.#healthCheckFailures.delete(name);
-  }
-
   getWorkerStats(name: string): {
     totalRequests: number;
     uptimeMs: number;
     restartCount: number;
   } {
-    const spawnTime = this.#workerSpawnTimes.get(name);
-    return {
-      totalRequests: this.#requestCounts.get(name) ?? 0,
-      uptimeMs: spawnTime ? Date.now() - spawnTime : 0,
-      restartCount: this.#restartCounts.get(name) ?? 0,
-    };
-  }
-
-  async #getOrCreateWorker(name: string): Promise<DenoHTTPWorker> {
-    const existing = this.#workers.get(name);
-    if (existing) return existing;
-
-    const inflight = this.#workerPromises.get(name);
-    if (inflight) return inflight;
-
-    const entrypoint = this.#registry.getEntrypoint(name);
-    if (!entrypoint) {
-      throw new Error(`Function "${name}" not found`);
-    }
-
-    const promise = this.#spawnWorker(name, entrypoint);
-    this.#workerPromises.set(name, promise);
-
-    try {
-      const worker = await promise;
-      this.#workers.set(name, worker);
-      this.#workerPromises.delete(name);
-
-      // Track spawn time; increment restart count if not first spawn
-      if (this.#workerSpawnTimes.has(name)) {
-        this.#restartCounts.set(name, (this.#restartCounts.get(name) ?? 0) + 1);
-      }
-      this.#workerSpawnTimes.set(name, Date.now());
-
-      // Auto-remove on exit so next request respawns
-      worker.addEventListener("exit", () => {
-        this.#stopHealthCheck(name);
-        this.#workers.delete(name);
-      });
-
-      this.#options.onFunctionReady?.(name);
-      this.#startHealthCheck(name, worker);
-      return worker;
-    } catch (err) {
-      this.#workerPromises.delete(name);
-      throw err;
-    }
-  }
-
-  async #spawnWorker(
-    name: string,
-    entrypoint: string
-  ): Promise<DenoHTTPWorker> {
-    const userOptions = this.#options.workerOptions ?? {};
-
-    // Resolve permission flags: functionPermissions > function.json > defaultProfile > "standard"
-    let runFlags: string[];
-    if (userOptions.runFlags) {
-      // Explicit runFlags in workerOptions take absolute priority
-      runFlags = [...userOptions.runFlags];
-    } else {
-      const serverOverride = this.#options.functionPermissions?.[name];
-      const fnConfig = this.#registry.getFunctionConfig(name);
-      const permissionValue = serverOverride ?? fnConfig?.permissions;
-      runFlags = [
-        ...resolvePermissionFlags(permissionValue, {
-          defaultProfile: this.#options.defaultPermissionProfile,
-          customProfiles: this.#options.permissionProfiles,
-        }),
-      ];
-    }
-
-    // Append shared folder read permissions
-    const sharedFolderPaths = this.#registry.getSharedFolderPaths();
-    if (sharedFolderPaths.length > 0) {
-      const sharedPaths = sharedFolderPaths.join(",");
-      const hasFullRead =
-        runFlags.includes("--allow-read") || runFlags.includes("--allow-all");
-      if (!hasFullRead) {
-        const existingIdx = runFlags.findIndex((f) =>
-          f.startsWith("--allow-read=")
-        );
-        if (existingIdx !== -1) {
-          runFlags[existingIdx] += `,${sharedPaths}`;
-        } else {
-          runFlags.push(`--allow-read=${sharedPaths}`);
-        }
-      }
-    }
-
-    // Layer 5: per-function .env
-    const functionDir = path.dirname(entrypoint);
-    const perFunctionEnv = await loadEnvFile(path.join(functionDir, ".env"));
-
-    // Merge all layers: base (global + envFiles + programmatic) → per-function → workerOptions.env
-    const mergedEnv: Record<string, string> = {
-      ...this.#envBase,
-      ...perFunctionEnv,
-      ...(userOptions.env ?? {}),
-    };
-
-    // Collect per-function secrets for masking
-    let secretValues = this.#secretValues;
-    if (this.#options.maskSecrets !== false) {
-      const perFunctionSecrets = filterSecretValues(perFunctionEnv);
-      const workerSecrets = userOptions.env
-        ? filterSecretValues(userOptions.env)
-        : [];
-      secretValues = [...secretValues, ...perFunctionSecrets, ...workerSecrets];
-    }
-
-    const logLevel =
-      this.#options.logLevel ?? userOptions.logLevel ?? undefined;
-    let onLog = userOptions.onLog;
-
-    if (this.#options.onLog) {
-      const serverOnLog = this.#options.onLog;
-      onLog = (level, source, message) =>
-        serverOnLog(name, level, source, message);
-    } else if (logLevel && logLevel !== "silent" && !onLog) {
-      onLog = (_level, source, message) => {
-        if (source === "stderr") {
-          console.error(`[deno:${name}]`, message);
-        } else {
-          console.log(`[deno:${name}]`, message);
-        }
-      };
-    }
-
-    // Wrap onLog with secret masker
-    if (this.#options.maskSecrets !== false && onLog) {
-      const mask = createSecretMasker(secretValues);
-      const originalOnLog = onLog;
-      onLog = (level, source, message) =>
-        originalOnLog(level, source, mask(message));
-    }
-
-    return newDenoHTTPWorker(new URL(`file://${entrypoint}`), {
-      ...userOptions,
-      denoBootstrapScriptPath:
-        userOptions.denoBootstrapScriptPath ?? SERVE_BOOTSTRAP_PATH,
-      runFlags,
-      importMapPath:
-        this.#registry.getImportMapFile() ??
-        this.#options.importMapPath ??
-        userOptions.importMapPath,
-      configPath: this.#options.configPath ?? userOptions.configPath,
-      env: mergedEnv,
-      ...(logLevel ? { logLevel } : {}),
-      ...(onLog ? { onLog } : {}),
-      memoryLimitMb: userOptions.memoryLimitMb ?? this.#options.memoryLimitMb,
-      requestTimeout:
-        userOptions.requestTimeout ?? this.#options.requestTimeout,
-      workerMaxDuration:
-        userOptions.workerMaxDuration ?? this.#options.workerMaxDuration,
-    });
+    return this.#pool.getStats(name);
   }
 
   #startWatcher(): void {
@@ -718,12 +421,12 @@ export class EdgeFunctionServer {
             if (isSharedChange) {
               // Regenerate import map and restart all workers
               await this.#registry.generateImportMap(this.#options.importMapPath, this.#options.configPath);
-              const workerNames = [...this.#workers.keys()];
+              const workerNames = this.#pool.getActiveWorkerNames();
               await Promise.all(
-                workerNames.map((name) => this.restartFunction(name))
+                workerNames.map((name) => this.#pool.restart(name))
               );
-            } else if (this.#workers.has(topDir)) {
-              await this.restartFunction(topDir);
+            } else if (this.#pool.getActiveWorkerNames().includes(topDir)) {
+              await this.#pool.restart(topDir);
             }
           }, 200)
         );
