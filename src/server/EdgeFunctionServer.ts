@@ -30,7 +30,12 @@ const SERVE_BOOTSTRAP_PATH = path.resolve(
 const ENTRYPOINT_NAMES = ["index.ts", "index.tsx", "index.js", "index.mjs"];
 
 const SHARED_FILE_EXTENSIONS = new Set([
-  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".json",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".json",
 ]);
 
 const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
@@ -350,7 +355,10 @@ export class EdgeFunctionServer {
       const baseDir = path.dirname(path.resolve(this.#options.importMapPath));
       if (parsed.imports) {
         for (const [key, value] of Object.entries(parsed.imports)) {
-          if (typeof value === "string" && (value.startsWith("./") || value.startsWith("../"))) {
+          if (
+            typeof value === "string" &&
+            (value.startsWith("./") || value.startsWith("../"))
+          ) {
             imports[key] = `file://${path.resolve(baseDir, value)}`;
           } else {
             imports[key] = value as string;
@@ -370,7 +378,10 @@ export class EdgeFunctionServer {
         const baseDir = path.dirname(path.resolve(this.#options.configPath));
         if (parsed.imports) {
           for (const [key, value] of Object.entries(parsed.imports)) {
-            if (typeof value === "string" && (value.startsWith("./") || value.startsWith("../"))) {
+            if (
+              typeof value === "string" &&
+              (value.startsWith("./") || value.startsWith("../"))
+            ) {
               imports[key] = `file://${path.resolve(baseDir, value)}`;
             } else {
               imports[key] = value as string;
@@ -787,16 +798,19 @@ export class EdgeFunctionServer {
       const serverOverride = this.#options.functionPermissions?.[name];
       const fnConfig = this.#functionConfigs.get(name);
       const permissionValue = serverOverride ?? fnConfig?.permissions;
-      runFlags = [...resolvePermissionFlags(permissionValue, {
-        defaultProfile: this.#options.defaultPermissionProfile,
-        customProfiles: this.#options.permissionProfiles,
-      })];
+      runFlags = [
+        ...resolvePermissionFlags(permissionValue, {
+          defaultProfile: this.#options.defaultPermissionProfile,
+          customProfiles: this.#options.permissionProfiles,
+        }),
+      ];
     }
 
     // Append shared folder read permissions
     if (this.#sharedFolderPaths.length > 0) {
       const sharedPaths = this.#sharedFolderPaths.join(",");
-      const hasFullRead = runFlags.includes("--allow-read") || runFlags.includes("--allow-all");
+      const hasFullRead =
+        runFlags.includes("--allow-read") || runFlags.includes("--allow-all");
       if (!hasFullRead) {
         const existingIdx = runFlags.findIndex((f) =>
           f.startsWith("--allow-read=")
