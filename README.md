@@ -20,6 +20,7 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 - [Execution Limits](#execution-limits)
 - [Configuration](#configuration)
 - [Logging](#logging)
+- [Shared Folders](#shared-folders)
 - [Import Maps](#import-maps)
 - [API Reference](#api-reference)
 - [License](#license)
@@ -118,10 +119,12 @@ const worker = await newDenoHTTPWorker(new URL("file:///path/to/handler.ts"), {
 
 ## EdgeFunctionServer
 
-`EdgeFunctionServer` is an HTTP server that routes requests to per-function Deno workers. Each subdirectory under `functionsDir` is a separate function, identified by its folder name.
+`EdgeFunctionServer` is an HTTP server that routes requests to per-function Deno workers. Each subdirectory under `functionsDir` is a separate function, identified by its folder name. Directories starting with `_` are treated as [shared folders](#shared-folders) instead.
 
 ```
 functions/
+├── _shared/          ← shared code, not a function
+│   └── utils.ts
 ├── hello/
 │   └── index.ts
 └── greet/
@@ -566,6 +569,7 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `adapter`          | `RuntimeName \| ServerAdapter`                   | Server adapter: `"node"`, `"bun"`, `"deno"`, or a custom `ServerAdapter` (default: auto-detect) |
 | `eagerSpawn`       | `boolean`                                        | Spawn all workers at startup (default: `false`)                                                 |
 | `hotReload`        | `boolean`                                        | Watch & restart on file changes (default: `false`)                                              |
+| `watchSharedFolders` | `boolean`                                      | Watch shared folders and restart all workers on change (default: `true`, requires `hotReload`)   |
 | `workerOptions`    | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                                |
 | `memoryLimitMb`    | `number`                                         | V8 heap memory limit in MB for all workers                                                      |
 | `requestTimeout`   | `number`                                         | Per-request timeout in ms; returns 504 on timeout                                               |
@@ -637,6 +641,62 @@ The legacy `printOutput` and `printCommandAndArguments` booleans still work. Whe
 - `printCommandAndArguments: true` resolves to `logLevel: "debug"`
 
 An explicit `logLevel` takes precedence over both booleans.
+
+## Shared Folders
+
+Share code across edge functions using underscore-prefixed folders, following [Supabase's convention](https://supabase.com/docs/guides/functions/development-tips).
+
+### Directory structure
+
+Any folder starting with `_` is treated as a shared folder — it is excluded from function discovery and made available for imports.
+
+```
+functions/
+├── _shared/
+│   ├── cors.ts
+│   └── db/
+│       └── client.ts
+├── _helpers/
+│   └── utils.ts
+├── hello/
+│   └── index.ts
+└── greet/
+    └── index.ts
+```
+
+### Importing shared code
+
+Functions can import shared modules two ways:
+
+```ts
+// Bare specifier (via auto-generated import map)
+import { corsHeaders } from "_shared/cors.ts";
+import { getClient } from "_shared/db/client.ts";
+
+// Relative path (always works in Deno)
+import { corsHeaders } from "../_shared/cors.ts";
+```
+
+The server automatically generates an import map with entries for all files in shared folders (`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.json`), scanned recursively. If you also provide an `importMapPath`, the entries are merged — your import map takes precedence on conflicts.
+
+### Read permissions
+
+Shared folder paths are automatically added to `--allow-read` permissions for each worker, so Deno can access the shared files without granting read access to the entire functions directory.
+
+### Hot-reload
+
+When `hotReload` is enabled, changes to shared files trigger a restart of **all** running workers (since any function may depend on the changed file). This is controlled by the `watchSharedFolders` option:
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  hotReload: true,
+  watchSharedFolders: true, // default: true (only effective when hotReload is true)
+});
+```
+
+Set `watchSharedFolders: false` to disable shared folder watching while keeping function-level hot-reload active.
 
 ## Import Maps
 
