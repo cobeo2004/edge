@@ -182,11 +182,11 @@ Or provide a custom adapter implementing the `ServerAdapter` interface:
 import type {
   ServerAdapter,
   AdapterServer,
-  RequestHandler,
+  WorkerRequestHandler,
 } from "@cobeo2004/edge";
 
 const myAdapter: ServerAdapter = {
-  createServer(handler: RequestHandler): AdapterServer {
+  createServer(handler: WorkerRequestHandler): AdapterServer {
     // Return an object with listen(), close(), and port
   },
 };
@@ -284,25 +284,25 @@ const server = new EdgeFunctionServer({
   port: 3000,
   auth: new JWTStrategy({
     secret: process.env.JWT_SECRET!, // HMAC shared secret
-    issuer: "my-app",               // validate iss claim (optional)
-    audience: "api",                 // validate aud claim (optional)
+    issuer: "my-app", // validate iss claim (optional)
+    audience: "api", // validate aud claim (optional)
   }),
 });
 ```
 
 `JWTStrategy` options:
 
-| Option          | Type                           | Description                                      |
-| --------------- | ------------------------------ | ------------------------------------------------ |
-| `secret`        | `string`                       | HMAC shared secret                               |
-| `key`           | `CryptoKey \| Uint8Array`      | RSA/EC public key for direct verification        |
-| `jwksEndpoint`  | `string`                       | JWKS URL for remote key fetching                 |
-| `algorithms`    | `string[]`                     | Accepted algorithms (default: inferred)          |
-| `issuer`        | `string`                       | Expected `iss` claim                             |
-| `audience`      | `string \| string[]`           | Expected `aud` claim                             |
-| `clockTolerance`| `number`                       | Clock tolerance in seconds (default: `0`)        |
-| `tokenLocation` | `"header" \| "cookie" \| "query"` | Where to extract the token (default: `"header"`) |
-| `tokenKey`      | `string`                       | Header/cookie/query param name (default: `"authorization"`) |
+| Option           | Type                              | Description                                                 |
+| ---------------- | --------------------------------- | ----------------------------------------------------------- |
+| `secret`         | `string`                          | HMAC shared secret                                          |
+| `key`            | `CryptoKey \| Uint8Array`         | RSA/EC public key for direct verification                   |
+| `jwksEndpoint`   | `string`                          | JWKS URL for remote key fetching                            |
+| `algorithms`     | `string[]`                        | Accepted algorithms (default: inferred)                     |
+| `issuer`         | `string`                          | Expected `iss` claim                                        |
+| `audience`       | `string \| string[]`              | Expected `aud` claim                                        |
+| `clockTolerance` | `number`                          | Clock tolerance in seconds (default: `0`)                   |
+| `tokenLocation`  | `"header" \| "cookie" \| "query"` | Where to extract the token (default: `"header"`)            |
+| `tokenKey`       | `string`                          | Header/cookie/query param name (default: `"authorization"`) |
 
 JWKS example (for Auth0, Supabase, Firebase, etc.):
 
@@ -397,12 +397,12 @@ Control Deno permission flags per function using named profiles instead of manua
 
 ### Built-in profiles
 
-| Profile      | Flags                                    |
-| ------------ | ---------------------------------------- |
-| `none`       | _(socket access only)_                   |
-| `strict`     | `--allow-net`                            |
-| `standard`   | `--allow-net --allow-env`                |
-| `permissive` | `--allow-all`                            |
+| Profile      | Flags                     |
+| ------------ | ------------------------- |
+| `none`       | _(socket access only)_    |
+| `strict`     | `--allow-net`             |
+| `standard`   | `--allow-net --allow-env` |
+| `permissive` | `--allow-all`             |
 
 The default profile is `"standard"`. The factory automatically adds scoped `--allow-read` for socket, script, and import map paths, so `standard` does not include a blanket `--allow-read`.
 
@@ -418,8 +418,8 @@ const server = new EdgeFunctionServer({
 
   // Per-function overrides (takes priority over function.json)
   functionPermissions: {
-    admin: "standard",           // profile name
-    compute: ["--allow-net"],    // raw flags
+    admin: "standard", // profile name
+    compute: ["--allow-net"], // raw flags
   },
 
   // Custom named profiles
@@ -507,7 +507,9 @@ const server = newEdgeFunctionServer({
   port: 3000,
   requestTimeout: 5000,
   onRequestStats: (stats: RequestStats) => {
-    console.log(`${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})`);
+    console.log(
+      `${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})`,
+    );
     if (stats.timedOut) console.warn("Request timed out!");
   },
 });
@@ -531,7 +533,9 @@ const server = newEdgeFunctionServer({
   healthCheckTimeout: 5_000, // 5 second timeout per ping
   healthCheckMaxFailures: 3, // restart after 3 consecutive failures
   onWorkerUnhealthy: (name, failures) => {
-    console.warn(`Worker ${name} restarted after ${failures} failed health checks`);
+    console.warn(
+      `Worker ${name} restarted after ${failures} failed health checks`,
+    );
   },
 });
 ```
@@ -564,35 +568,35 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 
 `EdgeFunctionServerOptions` additionally supports:
 
-| Option             | Type                                             | Description                                                                                     |
-| ------------------ | ------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `functionsDir`     | `string`                                         | Absolute path to the functions directory                                                        |
-| `port`             | `number`                                         | Port to listen on                                                                               |
-| `hostname`         | `string`                                         | Hostname to bind to (default: `"127.0.0.1"`)                                                    |
-| `adapter`          | `RuntimeName \| ServerAdapter`                   | Server adapter: `"node"`, `"bun"`, `"deno"`, or a custom `ServerAdapter` (default: auto-detect) |
-| `eagerSpawn`       | `boolean`                                        | Spawn all workers at startup (default: `false`)                                                 |
-| `hotReload`        | `boolean`                                        | Watch & restart on file changes (default: `false`)                                              |
-| `watchSharedFolders` | `boolean`                                      | Watch shared folders and restart all workers on change (default: `true`, requires `hotReload`)   |
-| `workerOptions`    | `Partial<DenoWorkerOptions>`                     | Options forwarded to each worker                                                                |
-| `memoryLimitMb`    | `number`                                         | V8 heap memory limit in MB for all workers                                                      |
-| `requestTimeout`   | `number`                                         | Per-request timeout in ms; returns 504 on timeout                                               |
-| `workerMaxDuration`| `number`                                         | Max wall-clock lifetime in ms for each worker                                                   |
-| `onRequestStats`   | `(stats: RequestStats) => void`                  | Callback fired after each request with timing and status info                                   |
-| `logLevel`         | `LogLevel`                                       | Log level for all function workers (default: `"silent"`)                                        |
-| `onLog`            | `(functionName, level, source, message) => void` | Custom log handler with function name context (default: `[deno:${name}]` prefix)                |
-| `env`              | `Record<string, string>`                         | Environment variables applied to all workers                                                    |
-| `envFiles`         | `string[]`                                       | Additional `.env` file paths loaded at startup                                                  |
-| `maskSecrets`      | `boolean`                                        | Mask env var values in log output (default: `true`)                                             |
-| `healthCheckInterval`  | `number`                                     | Interval in ms between health-check pings (disabled when not set)                               |
-| `healthCheckTimeout`   | `number`                                     | Timeout in ms for each health-check ping (default: `5000`)                                      |
-| `healthCheckMaxFailures` | `number`                                   | Consecutive failures before auto-restart (default: `3`)                                         |
-| `onWorkerUnhealthy`  | `(name: string, consecutiveFailures: number) => void` | Called when a worker is restarted due to failed health checks                            |
-| `auth`               | `AuthStrategy`                                         | Pluggable auth strategy (opt-in, disabled by default)                                   |
-| `onAuthFailure`      | `(request, error) => Response`                         | Custom response on auth failure (default: 401 JSON)                                     |
-| `publicFunctions`    | `string[]`                                             | Functions that skip auth entirely                                                       |
-| `defaultPermissionProfile` | `string`                                         | Default permission profile for all functions (default: `"standard"`)                    |
-| `functionPermissions`| `Record<string, string \| string[]>`                   | Per-function permission overrides (priority over function.json)                         |
-| `permissionProfiles` | `Record<string, string[]>`                             | Custom named permission profiles (merged with built-ins)                                |
+| Option                     | Type                                                  | Description                                                                                     |
+| -------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `functionsDir`             | `string`                                              | Absolute path to the functions directory                                                        |
+| `port`                     | `number`                                              | Port to listen on                                                                               |
+| `hostname`                 | `string`                                              | Hostname to bind to (default: `"127.0.0.1"`)                                                    |
+| `adapter`                  | `RuntimeName \| ServerAdapter`                        | Server adapter: `"node"`, `"bun"`, `"deno"`, or a custom `ServerAdapter` (default: auto-detect) |
+| `eagerSpawn`               | `boolean`                                             | Spawn all workers at startup (default: `false`)                                                 |
+| `hotReload`                | `boolean`                                             | Watch & restart on file changes (default: `false`)                                              |
+| `watchSharedFolders`       | `boolean`                                             | Watch shared folders and restart all workers on change (default: `true`, requires `hotReload`)  |
+| `workerOptions`            | `Partial<DenoWorkerOptions>`                          | Options forwarded to each worker                                                                |
+| `memoryLimitMb`            | `number`                                              | V8 heap memory limit in MB for all workers                                                      |
+| `requestTimeout`           | `number`                                              | Per-request timeout in ms; returns 504 on timeout                                               |
+| `workerMaxDuration`        | `number`                                              | Max wall-clock lifetime in ms for each worker                                                   |
+| `onRequestStats`           | `(stats: RequestStats) => void`                       | Callback fired after each request with timing and status info                                   |
+| `logLevel`                 | `LogLevel`                                            | Log level for all function workers (default: `"silent"`)                                        |
+| `onLog`                    | `(functionName, level, source, message) => void`      | Custom log handler with function name context (default: `[deno:${name}]` prefix)                |
+| `env`                      | `Record<string, string>`                              | Environment variables applied to all workers                                                    |
+| `envFiles`                 | `string[]`                                            | Additional `.env` file paths loaded at startup                                                  |
+| `maskSecrets`              | `boolean`                                             | Mask env var values in log output (default: `true`)                                             |
+| `healthCheckInterval`      | `number`                                              | Interval in ms between health-check pings (disabled when not set)                               |
+| `healthCheckTimeout`       | `number`                                              | Timeout in ms for each health-check ping (default: `5000`)                                      |
+| `healthCheckMaxFailures`   | `number`                                              | Consecutive failures before auto-restart (default: `3`)                                         |
+| `onWorkerUnhealthy`        | `(name: string, consecutiveFailures: number) => void` | Called when a worker is restarted due to failed health checks                                   |
+| `auth`                     | `AuthStrategy`                                        | Pluggable auth strategy (opt-in, disabled by default)                                           |
+| `onAuthFailure`            | `(request, error) => Response`                        | Custom response on auth failure (default: 401 JSON)                                             |
+| `publicFunctions`          | `string[]`                                            | Functions that skip auth entirely                                                               |
+| `defaultPermissionProfile` | `string`                                              | Default permission profile for all functions (default: `"standard"`)                            |
+| `functionPermissions`      | `Record<string, string \| string[]>`                  | Per-function permission overrides (priority over function.json)                                 |
+| `permissionProfiles`       | `Record<string, string[]>`                            | Custom named permission profiles (merged with built-ins)                                        |
 
 ## Logging
 
@@ -734,35 +738,36 @@ Alternatively, use `configPath` to point to a full `deno.json` which supports `i
 
 ### Exports
 
-| Export                              | Kind     | Description                                                     |
-| ----------------------------------- | -------- | --------------------------------------------------------------- |
-| `newDenoHTTPWorker(code, options?)` | Function | Spawn a Deno worker from inline code or a URL                   |
-| `newEdgeFunctionServer(options)`    | Function | Create an `EdgeFunctionServer` instance                         |
-| `DenoHTTPWorker`                    | Type     | Worker instance with `request()`, `terminate()`, `shutdown()`   |
-| `EdgeFunctionServer`                | Class    | HTTP server routing to per-function Deno workers                |
-| `DenoWorkerOptions`                 | Type     | Options for `newDenoHTTPWorker`                                 |
-| `EdgeFunctionServerOptions`         | Type     | Options for `EdgeFunctionServer`                                |
-| `LogLevel`                          | Type     | `"debug" \| "info" \| "warn" \| "error" \| "silent"`            |
-| `EarlyExitDenoHTTPWorkerError`      | Class    | Error thrown when the Deno process exits unexpectedly           |
-| `MinimalChildProcess`               | Type     | Interface for the spawned child process                         |
-| `RequestStats`                      | Type     | Per-request stats: timing, status code, timeout flag            |
-| `ServerAdapter`                     | Type     | Adapter interface for pluggable HTTP servers                    |
-| `AdapterServer`                     | Type     | Server instance returned by an adapter                          |
-| `RequestHandler`                    | Type     | `(request: Request) => Promise<Response>`                       |
-| `RuntimeName`                       | Type     | `"node" \| "bun" \| "deno"`                                     |
-| `detectRuntime()`                   | Function | Detect current runtime (`"node"`, `"bun"`, or `"deno"`)         |
-| `resolveAdapter(option?)`           | Function | Resolve a `ServerAdapter` from a runtime name or custom adapter |
-| `nodeAdapter`                       | Object   | Built-in Node.js server adapter                                 |
-| `parseEnvFile(content)`             | Function | Parse `.env` file content into a key-value record               |
-| `loadEnvFile(path)`                 | Function | Load and parse a `.env` file (returns `{}` on ENOENT)           |
-| `createSecretMasker(secrets)`       | Function | Create a function that masks secret values in strings           |
-| `AuthStrategy`                      | Type     | Pluggable authentication strategy interface                     |
-| `AuthResult`                        | Type     | Authentication verification result                              |
-| `JWTStrategy`                       | Class    | Built-in JWT auth strategy (HMAC, RSA, EC, JWKS)               |
-| `JWTStrategyOptions`                | Type     | Options for `JWTStrategy`                                       |
-| `FunctionConfig`                    | Type     | Per-function configuration from `function.json`                 |
-| `BUILT_IN_PROFILES`                 | Object   | Built-in permission profiles (`none`, `strict`, `standard`, `permissive`) |
-| `resolvePermissionFlags(value, opts)` | Function | Resolve a profile name or flags array to Deno run flags       |
+| Export                                | Kind     | Description                                                               |
+| ------------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `newDenoHTTPWorker(code, options?)`   | Function | Spawn a Deno worker from inline code or a URL                             |
+| `newEdgeFunctionServer(options)`      | Function | Create an `EdgeFunctionServer` instance                                   |
+| `DenoHTTPWorker`                      | Type     | Worker instance with `request()`, `terminate()`, `shutdown()`             |
+| `EdgeFunctionServer`                  | Class    | HTTP server routing to per-function Deno workers                          |
+| `DenoWorkerOptions`                   | Type     | Options for `newDenoHTTPWorker`                                           |
+| `EdgeFunctionServerOptions`           | Type     | Options for `EdgeFunctionServer`                                          |
+| `LogLevel`                            | Type     | `"debug" \| "info" \| "warn" \| "error" \| "silent"`                      |
+| `EarlyExitDenoHTTPWorkerError`        | Class    | Error thrown when the Deno process exits unexpectedly                     |
+| `MinimalChildProcess`                 | Type     | Interface for the spawned child process                                   |
+| `RequestStats`                        | Type     | Per-request stats: timing, status code, timeout flag                      |
+| `ServerAdapter`                       | Type     | Adapter interface for pluggable HTTP servers                              |
+| `AdapterServer`                       | Type     | Server instance returned by an adapter                                    |
+| `WorkerRequestHandler`                | Class    | Middleware for routing requests to per-function Deno workers              |
+| `WorkerRequestHandlerOptions`         | Type     | Options for `WorkerRequestHandler`                                        |
+| `RuntimeName`                         | Type     | `"node" \| "bun" \| "deno"`                                               |
+| `detectRuntime()`                     | Function | Detect current runtime (`"node"`, `"bun"`, or `"deno"`)                   |
+| `resolveAdapter(option?)`             | Function | Resolve a `ServerAdapter` from a runtime name or custom adapter           |
+| `nodeAdapter`                         | Object   | Built-in Node.js server adapter                                           |
+| `parseEnvFile(content)`               | Function | Parse `.env` file content into a key-value record                         |
+| `loadEnvFile(path)`                   | Function | Load and parse a `.env` file (returns `{}` on ENOENT)                     |
+| `createSecretMasker(secrets)`         | Function | Create a function that masks secret values in strings                     |
+| `AuthStrategy`                        | Type     | Pluggable authentication strategy interface                               |
+| `AuthResult`                          | Type     | Authentication verification result                                        |
+| `JWTStrategy`                         | Class    | Built-in JWT auth strategy (HMAC, RSA, EC, JWKS)                          |
+| `JWTStrategyOptions`                  | Type     | Options for `JWTStrategy`                                                 |
+| `FunctionConfig`                      | Type     | Per-function configuration from `function.json`                           |
+| `BUILT_IN_PROFILES`                   | Object   | Built-in permission profiles (`none`, `strict`, `standard`, `permissive`) |
+| `resolvePermissionFlags(value, opts)` | Function | Resolve a profile name or flags array to Deno run flags                   |
 
 ## License
 

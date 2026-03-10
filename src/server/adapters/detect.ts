@@ -16,7 +16,6 @@ export async function resolveAdapter(
   if (option && typeof option === "object") return option;
 
   const runtime = option ?? detectRuntime();
-
   switch (runtime) {
     case "bun": {
       const { bunAdapter } = await import("./bun.js");
