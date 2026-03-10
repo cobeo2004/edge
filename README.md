@@ -15,6 +15,8 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 - [EdgeFunctionServer](#edgefunctionserver)
 - [Multi-Runtime Server Adapters](#multi-runtime-server-adapters)
 - [Environment Variables & Secrets](#environment-variables--secrets)
+- [Authentication](#authentication)
+- [Permission Profiles](#permission-profiles)
 - [Execution Limits](#execution-limits)
 - [Configuration](#configuration)
 - [Logging](#logging)
@@ -263,6 +265,191 @@ const mask = createSecretMasker(["my-secret-key"]);
 mask("token is my-secret-key"); // "token is ***"
 ```
 
+## Authentication
+
+`EdgeFunctionServer` supports pluggable authentication via the `AuthStrategy` interface. Authentication is opt-in — when no `auth` option is set, all requests pass through as before.
+
+### Built-in JWT Strategy
+
+The library ships a `JWTStrategy` powered by [`jose`](https://github.com/panva/jose) with full algorithm support (HMAC, RSA, EC) and JWKS endpoint verification.
+
+```ts
+import { EdgeFunctionServer, JWTStrategy } from "@cobeo2004/edge";
+
+const server = new EdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  auth: new JWTStrategy({
+    secret: process.env.JWT_SECRET!, // HMAC shared secret
+    issuer: "my-app",               // validate iss claim (optional)
+    audience: "api",                 // validate aud claim (optional)
+  }),
+});
+```
+
+`JWTStrategy` options:
+
+| Option          | Type                           | Description                                      |
+| --------------- | ------------------------------ | ------------------------------------------------ |
+| `secret`        | `string`                       | HMAC shared secret                               |
+| `key`           | `CryptoKey \| Uint8Array`      | RSA/EC public key for direct verification        |
+| `jwksEndpoint`  | `string`                       | JWKS URL for remote key fetching                 |
+| `algorithms`    | `string[]`                     | Accepted algorithms (default: inferred)          |
+| `issuer`        | `string`                       | Expected `iss` claim                             |
+| `audience`      | `string \| string[]`           | Expected `aud` claim                             |
+| `clockTolerance`| `number`                       | Clock tolerance in seconds (default: `0`)        |
+| `tokenLocation` | `"header" \| "cookie" \| "query"` | Where to extract the token (default: `"header"`) |
+| `tokenKey`      | `string`                       | Header/cookie/query param name (default: `"authorization"`) |
+
+JWKS example (for Auth0, Supabase, Firebase, etc.):
+
+```ts
+auth: new JWTStrategy({
+  jwksEndpoint: "https://your-tenant.auth0.com/.well-known/jwks.json",
+  audience: "https://api.example.com",
+}),
+```
+
+### Custom auth strategy
+
+Implement the `AuthStrategy` interface for any auth mechanism (API keys, OAuth introspection, etc.):
+
+```ts
+import type { AuthStrategy, AuthResult } from "@cobeo2004/edge";
+
+const apiKeyAuth: AuthStrategy = {
+  extractCredentials(request: Request) {
+    return Promise.resolve(request.headers.get("x-api-key"));
+  },
+  verify(credentials: string) {
+    if (credentials === process.env.API_KEY) {
+      return Promise.resolve({ valid: true, claims: { role: "service" } });
+    }
+    return Promise.resolve({ valid: false, error: "Invalid API key" });
+  },
+};
+
+const server = new EdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  auth: apiKeyAuth,
+});
+```
+
+### Auth claims forwarding
+
+When authentication succeeds, decoded claims are forwarded to the worker via the `X-Auth-Claims` header as a JSON string. Inside your Deno function:
+
+```ts
+Deno.serve((req) => {
+  const claims = JSON.parse(req.headers.get("x-auth-claims") ?? "{}");
+  return Response.json({ user: claims.sub, role: claims.role });
+});
+```
+
+### Public functions (auth opt-out)
+
+Functions can skip authentication in two ways:
+
+1. **Server-level:** list function names in `publicFunctions`:
+
+```ts
+const server = new EdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  auth: new JWTStrategy({ secret: "..." }),
+  publicFunctions: ["health", "docs"],
+});
+```
+
+2. **Per-function:** add a `function.json` in the function's directory:
+
+```json
+{ "auth": false }
+```
+
+### Custom auth failure response
+
+Override the default 401 response with `onAuthFailure`:
+
+```ts
+const server = new EdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  auth: new JWTStrategy({ secret: "..." }),
+  onAuthFailure: (request, result) =>
+    new Response(JSON.stringify({ error: result.error }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    }),
+});
+```
+
+## Permission Profiles
+
+Control Deno permission flags per function using named profiles instead of manually specifying `runFlags`.
+
+### Built-in profiles
+
+| Profile      | Flags                                    |
+| ------------ | ---------------------------------------- |
+| `none`       | _(socket access only)_                   |
+| `strict`     | `--allow-net`                            |
+| `standard`   | `--allow-net --allow-env --allow-read`   |
+| `permissive` | `--allow-all`                            |
+
+The default profile is `"standard"` (matching the previous default behavior).
+
+### Server-level configuration
+
+```ts
+const server = new EdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+
+  // Default profile for all functions
+  defaultPermissionProfile: "strict",
+
+  // Per-function overrides (takes priority over function.json)
+  functionPermissions: {
+    admin: "standard",           // profile name
+    compute: ["--allow-net"],    // raw flags
+  },
+
+  // Custom named profiles
+  permissionProfiles: {
+    "read-only": ["--allow-net", "--allow-read"],
+  },
+});
+```
+
+### Per-function configuration (`function.json`)
+
+Each function directory can contain a `function.json` that declares its permission profile and auth settings:
+
+```
+functions/
+├── hello/
+│   └── index.ts
+├── admin/
+│   ├── index.ts
+│   └── function.json    ← { "permissions": "standard", "auth": true }
+└── public-health/
+    ├── index.ts
+    └── function.json    ← { "permissions": "strict", "auth": false }
+```
+
+### Resolution order (highest priority wins)
+
+1. `functionPermissions[name]` in server options
+2. `permissions` in `function.json`
+3. `defaultPermissionProfile` in server options
+4. Falls back to `"standard"`
+
+If `workerOptions.runFlags` is set explicitly, it takes absolute priority over all profiles.
+
+> **Note:** The factory's automatic `--allow-read` / `--allow-write` augmentation for socket files, import maps, and config files still applies on top of whatever the profile resolves to.
+
 ## Execution Limits
 
 Prevent runaway functions from consuming unbounded resources with memory caps, request timeouts, and worker lifetime limits.
@@ -393,6 +580,12 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `healthCheckTimeout`   | `number`                                     | Timeout in ms for each health-check ping (default: `5000`)                                      |
 | `healthCheckMaxFailures` | `number`                                   | Consecutive failures before auto-restart (default: `3`)                                         |
 | `onWorkerUnhealthy`  | `(name: string, consecutiveFailures: number) => void` | Called when a worker is restarted due to failed health checks                            |
+| `auth`               | `AuthStrategy`                                         | Pluggable auth strategy (opt-in, disabled by default)                                   |
+| `onAuthFailure`      | `(request, error) => Response`                         | Custom response on auth failure (default: 401 JSON)                                     |
+| `publicFunctions`    | `string[]`                                             | Functions that skip auth entirely                                                       |
+| `defaultPermissionProfile` | `string`                                         | Default permission profile for all functions (default: `"standard"`)                    |
+| `functionPermissions`| `Record<string, string \| string[]>`                   | Per-function permission overrides (priority over function.json)                         |
+| `permissionProfiles` | `Record<string, string[]>`                             | Custom named permission profiles (merged with built-ins)                                |
 
 ## Logging
 
@@ -500,6 +693,13 @@ Alternatively, use `configPath` to point to a full `deno.json` which supports `i
 | `parseEnvFile(content)`             | Function | Parse `.env` file content into a key-value record               |
 | `loadEnvFile(path)`                 | Function | Load and parse a `.env` file (returns `{}` on ENOENT)           |
 | `createSecretMasker(secrets)`       | Function | Create a function that masks secret values in strings           |
+| `AuthStrategy`                      | Type     | Pluggable authentication strategy interface                     |
+| `AuthResult`                        | Type     | Authentication verification result                              |
+| `JWTStrategy`                       | Class    | Built-in JWT auth strategy (HMAC, RSA, EC, JWKS)               |
+| `JWTStrategyOptions`                | Type     | Options for `JWTStrategy`                                       |
+| `FunctionConfig`                    | Type     | Per-function configuration from `function.json`                 |
+| `BUILT_IN_PROFILES`                 | Object   | Built-in permission profiles (`none`, `strict`, `standard`, `permissive`) |
+| `resolvePermissionFlags(value, opts)` | Function | Resolve a profile name or flags array to Deno run flags       |
 
 ## License
 
