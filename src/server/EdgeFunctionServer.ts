@@ -307,7 +307,12 @@ export class EdgeFunctionServer {
     }
 
     const sharedEntries = await this.#scanSharedFiles();
-    if (sharedEntries.size === 0 && !this.#options.importMapPath) return;
+    if (
+      sharedEntries.size === 0 &&
+      !this.#options.importMapPath &&
+      !this.#options.configPath
+    )
+      return;
 
     // Start with auto-generated entries
     const imports: Record<string, string> = {};
@@ -315,23 +320,34 @@ export class EdgeFunctionServer {
       imports[key] = value;
     }
 
-    // Merge user import map / config imports (user takes precedence)
+    // Merge user import map (user takes precedence, errors propagate — fail fast)
     let scopes: Record<string, Record<string, string>> | undefined;
-    const userMapSources: { filePath: string }[] = [];
     if (this.#options.importMapPath) {
-      userMapSources.push({ filePath: this.#options.importMapPath });
+      const content = await fsp.readFile(this.#options.importMapPath, "utf-8");
+      const parsed = JSON.parse(content);
+      const baseDir = path.dirname(path.resolve(this.#options.importMapPath));
+      if (parsed.imports) {
+        for (const [key, value] of Object.entries(parsed.imports)) {
+          if (typeof value === "string" && (value.startsWith("./") || value.startsWith("../"))) {
+            imports[key] = `file://${path.resolve(baseDir, value)}`;
+          } else {
+            imports[key] = value as string;
+          }
+        }
+      }
+      if (parsed.scopes) {
+        scopes = parsed.scopes;
+      }
     }
+
+    // Merge config imports if present (errors caught — configPath may not contain imports)
     if (this.#options.configPath) {
-      userMapSources.push({ filePath: this.#options.configPath });
-    }
-    for (const { filePath } of userMapSources) {
       try {
-        const content = await fsp.readFile(filePath, "utf-8");
+        const content = await fsp.readFile(this.#options.configPath, "utf-8");
         const parsed = JSON.parse(content);
-        const baseDir = path.dirname(path.resolve(filePath));
+        const baseDir = path.dirname(path.resolve(this.#options.configPath));
         if (parsed.imports) {
           for (const [key, value] of Object.entries(parsed.imports)) {
-            // Resolve relative paths against the source file's directory
             if (typeof value === "string" && (value.startsWith("./") || value.startsWith("../"))) {
               imports[key] = `file://${path.resolve(baseDir, value)}`;
             } else {
@@ -343,7 +359,7 @@ export class EdgeFunctionServer {
           scopes = parsed.scopes;
         }
       } catch {
-        // Skip unreadable files
+        // configPath may not contain import map fields — skip gracefully
       }
     }
 
