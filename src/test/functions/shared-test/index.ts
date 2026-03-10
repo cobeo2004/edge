@@ -1,4 +1,3 @@
-// src/test/functions/shared-test/index.ts
 import { withCors } from "_shared/cors.ts";
 import { getConnectionString } from "_shared/db/client.ts";
 
