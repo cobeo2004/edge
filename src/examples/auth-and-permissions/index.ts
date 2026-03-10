@@ -61,7 +61,7 @@ const server = new EdgeFunctionServer({
       {
         status: 401,
         headers: { "Content-Type": "application/json" },
-      },
+      }
     ),
 
   // --- Permission Profiles ---
@@ -84,7 +84,7 @@ const server = new EdgeFunctionServer({
     console.error(`  Function "${name}" error:`, err.message),
   onRequestStats: (stats) => {
     console.log(
-      `  [stats] ${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})`,
+      `  [stats] ${stats.functionName}: ${stats.durationMs}ms (${stats.statusCode})`
     );
   },
 });
