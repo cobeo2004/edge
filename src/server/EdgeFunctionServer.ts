@@ -35,7 +35,7 @@ export class EdgeFunctionServer {
     await this.#registry.scan();
     await this.#registry.generateImportMap(
       this.#options.importMapPath,
-      this.#options.configPath,
+      this.#options.configPath
     );
     const { envBase, secretValues } = await this.#loadEnv();
 
@@ -73,9 +73,9 @@ export class EdgeFunctionServer {
           {
             status: 500,
             headers: { "Content-Type": "application/json" },
-          },
+          }
         );
-      }),
+      })
     );
 
     const hostname = this.#options.hostname ?? "127.0.0.1";
@@ -100,11 +100,11 @@ export class EdgeFunctionServer {
           // Regenerate import map and restart all workers
           await this.#registry.generateImportMap(
             this.#options.importMapPath,
-            this.#options.configPath,
+            this.#options.configPath
           );
           const workerNames = this.#pool!.getActiveWorkerNames();
           await Promise.all(workerNames.map((n) => this.#pool!.restart(n)));
-        },
+        }
       );
     }
 
@@ -112,7 +112,7 @@ export class EdgeFunctionServer {
       await Promise.all(
         this.#registry
           .listFunctions()
-          .map((name) => this.#pool!.getOrCreate(name)),
+          .map((name) => this.#pool!.getOrCreate(name))
       );
     }
   }
@@ -177,8 +177,8 @@ export class EdgeFunctionServer {
           new Response(JSON.stringify({ error: "No handler" }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
-          }),
-        ),
+          })
+        )
     );
     return run();
   }
@@ -189,7 +189,7 @@ export class EdgeFunctionServer {
   }> {
     // Layer 2: global .env
     const globalEnv = await loadEnvFile(
-      path.join(this.#options.functionsDir, ".env"),
+      path.join(this.#options.functionsDir, ".env")
     );
 
     // Layer 3: additional envFiles
@@ -220,7 +220,7 @@ export class EdgeFunctionServer {
 
 /** Convenience factory */
 export function newEdgeFunctionServer(
-  options: EdgeFunctionServerOptions,
+  options: EdgeFunctionServerOptions
 ): EdgeFunctionServer {
   return new EdgeFunctionServer(options);
 }
