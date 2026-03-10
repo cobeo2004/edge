@@ -72,26 +72,28 @@ Periodic HTTP health-check pings to detect frozen/unresponsive workers:
 
 ### JWT Verification Middleware
 
-**Status:** Not started
+**Status:** Done
 
-Supabase validates JWTs on every request by default (using the project's JWT secret). This project has no auth layer.
-
-**Planned:**
-- Optional JWT verification middleware in `EdgeFunctionServer`
-- Configurable JWT secret / JWKS endpoint
-- Pass decoded claims to function via request headers
-- Allow per-function opt-out (e.g., for public endpoints)
+Pluggable authentication via `AuthStrategy` interface with built-in `JWTStrategy` (powered by `jose`):
+- Optional `auth` option on `EdgeFunctionServerOptions` accepts any `AuthStrategy` implementation
+- Built-in `JWTStrategy` supports HMAC, RSA, EC, and JWKS endpoint verification
+- Token extraction from Authorization header, cookies, or query params
+- Decoded claims forwarded to functions via `X-Auth-Claims` header
+- Per-function opt-out via `publicFunctions` server option or `auth: false` in `function.json`
+- Configurable `onAuthFailure` callback for custom error responses
+- Exported types: `AuthStrategy`, `AuthResult`, `JWTStrategy`, `JWTStrategyOptions`
 
 ### Permission Sandboxing Profiles
 
-**Status:** Partial — users can pass `runFlags` manually
+**Status:** Done
 
-Supabase runs functions with a strict default permission set. This project defaults to `--allow-net --allow-env` but leaves full control to the user.
-
-**Planned:**
-- Named permission profiles (e.g., `"strict"`, `"standard"`, `"permissive"`)
-- Per-function permission overrides
-- Document recommended production permission sets
+Named permission profiles and per-function overrides:
+- Four built-in profiles: `none`, `strict`, `standard`, `permissive`
+- Custom named profiles via `permissionProfiles` server option
+- Per-function overrides via `functionPermissions` server option or `permissions` in `function.json`
+- Resolution order: `functionPermissions` > `function.json` > `defaultPermissionProfile` > `"standard"`
+- Raw flags arrays supported alongside profile names
+- Exported utilities: `BUILT_IN_PROFILES`, `resolvePermissionFlags()`, `FunctionConfig`
 
 ---
 

@@ -25,3 +25,12 @@ export type {
 export { detectRuntime, resolveAdapter, nodeAdapter } from "./server/index.js";
 
 export { parseEnvFile, loadEnvFile, createSecretMasker } from "./env/index.js";
+
+export type { AuthResult, AuthStrategy } from "./auth/index.js";
+export { JWTStrategy, type JWTStrategyOptions } from "./auth/index.js";
+
+export type { FunctionConfig } from "./permissions/index.js";
+export {
+  BUILT_IN_PROFILES,
+  resolvePermissionFlags,
+} from "./permissions/index.js";

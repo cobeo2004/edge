@@ -6,3 +6,4 @@ dist
 .claude/
 skills-lock.json
 .agents/
+docs/plans/

@@ -27,6 +27,8 @@ describe("EdgeFunctionServer – routing", { timeout: 15_000 }, () => {
       "import-map-test",
       "npm-import",
       "oom",
+      "public",
+      "shared-test",
       "slow",
       "unresponsive",
       "wasm-test",
