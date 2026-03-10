@@ -2,16 +2,16 @@ import type { DenoHTTPWorker, RequestStats } from "../worker/index.js";
 import type { WorkerPool } from "./WorkerPool.js";
 import type { Middleware, RequestContext } from "./types.js";
 
-export interface RequestHandlerOptions {
+export interface WorkerRequestHandlerOptions {
   onFunctionError?: (name: string, error: Error) => void;
   onRequestStats?: (stats: RequestStats) => void;
 }
 
-export class RequestHandler {
+export class WorkerRequestHandler {
   #pool: WorkerPool;
-  #options: RequestHandlerOptions;
+  #options: WorkerRequestHandlerOptions;
 
-  constructor(pool: WorkerPool, options: RequestHandlerOptions) {
+  constructor(pool: WorkerPool, options: WorkerRequestHandlerOptions) {
     this.#pool = pool;
     this.#options = options;
   }
@@ -28,7 +28,7 @@ export class RequestHandler {
         this.#options.onFunctionError?.(functionName, err as Error);
         return new Response(
           JSON.stringify({ error: "Failed to start function worker" }),
-          { status: 502, headers: { "Content-Type": "application/json" } }
+          { status: 502, headers: { "Content-Type": "application/json" } },
         );
       }
 
@@ -46,7 +46,7 @@ export class RequestHandler {
       delete headers["x-auth-claims"];
       if (ctx.authClaims) {
         headers["x-auth-claims"] = Buffer.from(
-          JSON.stringify(ctx.authClaims)
+          JSON.stringify(ctx.authClaims),
         ).toString("base64url");
       }
 
@@ -92,7 +92,7 @@ export class RequestHandler {
             const body = new ReadableStream({
               start(controller) {
                 proxyRes.on("data", (chunk: Buffer) =>
-                  controller.enqueue(chunk)
+                  controller.enqueue(chunk),
                 );
                 proxyRes.on("end", () => {
                   controller.close();
@@ -109,9 +109,9 @@ export class RequestHandler {
               new Response(body, {
                 status: statusCode,
                 headers: responseHeaders,
-              })
+              }),
             );
-          }
+          },
         );
 
         proxyReq.on("error", (err) => {
@@ -126,7 +126,7 @@ export class RequestHandler {
             new Response(JSON.stringify({ error: errorMsg }), {
               status,
               headers: { "Content-Type": "application/json" },
-            })
+            }),
           );
         });
 
@@ -160,7 +160,7 @@ export class RequestHandler {
     functionName: string,
     startTime: number,
     statusCode: number,
-    timedOut: boolean
+    timedOut: boolean,
   ): void {
     if (!this.#options.onRequestStats) return;
     const endTime = Date.now();
