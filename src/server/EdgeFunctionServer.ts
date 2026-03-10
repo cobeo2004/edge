@@ -10,6 +10,9 @@ import {
   newDenoHTTPWorker,
 } from "../worker/index.js";
 import { loadEnvFile, createSecretMasker } from "../env/index.js";
+import type { AuthResult, AuthStrategy } from "../auth/types.js";
+import { loadFunctionConfig } from "../permissions/config.js";
+import type { FunctionConfig } from "../permissions/types.js";
 import type { AdapterServer, ServerAdapter } from "./adapters/types.js";
 import type { RuntimeName } from "./adapters/detect.js";
 import { resolveAdapter } from "./adapters/detect.js";
@@ -86,6 +89,12 @@ export interface EdgeFunctionServerOptions {
   healthCheckMaxFailures?: number;
   /** Called when a worker is restarted due to failed health checks */
   onWorkerUnhealthy?: (name: string, consecutiveFailures: number) => void;
+  /** Auth strategy instance. When set, all requests require authentication unless opted out */
+  auth?: AuthStrategy;
+  /** Custom response on auth failure. Default: 401 JSON */
+  onAuthFailure?: (request: Request, error: AuthResult) => Response | Promise<Response>;
+  /** Functions that skip auth entirely (server-level override) */
+  publicFunctions?: string[];
 }
 
 export class EdgeFunctionServer {
@@ -104,6 +113,7 @@ export class EdgeFunctionServer {
   #healthCheckTimers = new Map<string, ReturnType<typeof setInterval>>();
   #healthCheckFailures = new Map<string, number>();
   #healthCheckInFlight = new Set<string>();
+  #functionConfigs = new Map<string, FunctionConfig>();
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -237,6 +247,8 @@ export class EdgeFunctionServer {
         try {
           await fsp.stat(candidate);
           this.#functions.set(entry, candidate);
+          const fnConfig = await loadFunctionConfig(dirPath);
+          this.#functionConfigs.set(entry, fnConfig);
           break;
         } catch {
           // try next
@@ -255,6 +267,59 @@ export class EdgeFunctionServer {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    // Auth check
+    let authClaims: Record<string, unknown> | undefined;
+    if (this.#options.auth) {
+      const isPublic =
+        this.#options.publicFunctions?.includes(functionName) ||
+        this.#functionConfigs.get(functionName)?.auth === false;
+
+      if (!isPublic) {
+        const credentials =
+          await this.#options.auth.extractCredentials(request);
+
+        if (!credentials) {
+          const result: AuthResult = {
+            valid: false,
+            error: "No credentials provided",
+          };
+          if (this.#options.onAuthFailure) {
+            return this.#options.onAuthFailure(request, result);
+          }
+          return new Response(
+            JSON.stringify({
+              error: "Unauthorized",
+              message: result.error,
+            }),
+            {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        const authResult = await this.#options.auth.verify(credentials);
+
+        if (!authResult.valid) {
+          if (this.#options.onAuthFailure) {
+            return this.#options.onAuthFailure(request, authResult);
+          }
+          return new Response(
+            JSON.stringify({
+              error: "Unauthorized",
+              message: authResult.error,
+            }),
+            {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        authClaims = authResult.claims;
+      }
     }
 
     let worker: DenoHTTPWorker;
@@ -276,6 +341,9 @@ export class EdgeFunctionServer {
     request.headers.forEach((value, key) => {
       headers[key] = value;
     });
+    if (authClaims) {
+      headers["x-auth-claims"] = JSON.stringify(authClaims);
+    }
 
     const startTime = Date.now();
     this.#requestCounts.set(
