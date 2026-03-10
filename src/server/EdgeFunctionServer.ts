@@ -104,6 +104,7 @@ export class EdgeFunctionServer {
   #healthCheckTimers = new Map<string, ReturnType<typeof setInterval>>();
   #healthCheckFailures = new Map<string, number>();
   #healthCheckInFlight = new Set<string>();
+  #sharedFolderPaths: string[] = [];
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -221,6 +222,7 @@ export class EdgeFunctionServer {
 
   async #scanFunctions(): Promise<void> {
     this.#functions.clear();
+    this.#sharedFolderPaths = [];
     let entries: string[];
     try {
       entries = await fsp.readdir(this.#options.functionsDir);
@@ -231,6 +233,12 @@ export class EdgeFunctionServer {
       const dirPath = path.join(this.#options.functionsDir, entry);
       const stat = await fsp.stat(dirPath);
       if (!stat.isDirectory()) continue;
+
+      // Collect underscore-prefixed dirs as shared folders, skip function discovery
+      if (entry.startsWith("_")) {
+        this.#sharedFolderPaths.push(dirPath);
+        continue;
+      }
 
       for (const name of ENTRYPOINT_NAMES) {
         const candidate = path.join(dirPath, name);
