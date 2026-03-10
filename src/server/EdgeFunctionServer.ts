@@ -12,6 +12,7 @@ import {
 import { loadEnvFile, createSecretMasker } from "../env/index.js";
 import type { AuthResult, AuthStrategy } from "../auth/types.js";
 import { loadFunctionConfig } from "../permissions/config.js";
+import { resolvePermissionFlags } from "../permissions/profiles.js";
 import type { FunctionConfig } from "../permissions/types.js";
 import type { AdapterServer, ServerAdapter } from "./adapters/types.js";
 import type { RuntimeName } from "./adapters/detect.js";
@@ -95,6 +96,12 @@ export interface EdgeFunctionServerOptions {
   onAuthFailure?: (request: Request, error: AuthResult) => Response | Promise<Response>;
   /** Functions that skip auth entirely (server-level override) */
   publicFunctions?: string[];
+  /** Default permission profile for all functions. Default: "standard" */
+  defaultPermissionProfile?: string;
+  /** Per-function permission overrides. Takes priority over function.json */
+  functionPermissions?: Record<string, string | string[]>;
+  /** Custom named permission profiles (merged with built-ins) */
+  permissionProfiles?: Record<string, string[]>;
 }
 
 export class EdgeFunctionServer {
@@ -635,8 +642,21 @@ export class EdgeFunctionServer {
     entrypoint: string
   ): Promise<DenoHTTPWorker> {
     const userOptions = this.#options.workerOptions ?? {};
-    const defaultRunFlags = ["--allow-net", "--allow-env"];
-    const runFlags = userOptions.runFlags ?? defaultRunFlags;
+
+    // Resolve permission flags: functionPermissions > function.json > defaultProfile > "standard"
+    let runFlags: string[];
+    if (userOptions.runFlags) {
+      // Explicit runFlags in workerOptions take absolute priority
+      runFlags = userOptions.runFlags;
+    } else {
+      const serverOverride = this.#options.functionPermissions?.[name];
+      const fnConfig = this.#functionConfigs.get(name);
+      const permissionValue = serverOverride ?? fnConfig?.permissions;
+      runFlags = resolvePermissionFlags(permissionValue, {
+        defaultProfile: this.#options.defaultPermissionProfile,
+        customProfiles: this.#options.permissionProfiles,
+      });
+    }
 
     // Layer 5: per-function .env
     const functionDir = path.dirname(entrypoint);
