@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -23,6 +24,10 @@ const SERVE_BOOTSTRAP_PATH = path.resolve(
 );
 
 const ENTRYPOINT_NAMES = ["index.ts", "index.tsx", "index.js", "index.mjs"];
+
+const SHARED_FILE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".json",
+]);
 
 const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
 
@@ -105,6 +110,7 @@ export class EdgeFunctionServer {
   #healthCheckFailures = new Map<string, number>();
   #healthCheckInFlight = new Set<string>();
   #sharedFolderPaths: string[] = [];
+  #importMapFile: string | undefined;
 
   constructor(options: EdgeFunctionServerOptions) {
     this.#options = options;
@@ -112,6 +118,7 @@ export class EdgeFunctionServer {
 
   async start(): Promise<void> {
     await this.#scanFunctions();
+    await this.#generateImportMap();
     await this.#loadEnv();
 
     const adapter = await resolveAdapter(this.#options.adapter);
@@ -161,6 +168,12 @@ export class EdgeFunctionServer {
     }
     this.#workers.clear();
     this.#workerPromises.clear();
+
+    // Clean up generated import map
+    if (this.#importMapFile) {
+      await fsp.rm(this.#importMapFile, { force: true });
+      this.#importMapFile = undefined;
+    }
 
     if (this.#server) {
       await this.#server.close();
@@ -251,6 +264,99 @@ export class EdgeFunctionServer {
         }
       }
     }
+  }
+
+  async #scanSharedFiles(): Promise<Map<string, string>> {
+    const entries = new Map<string, string>();
+
+    const scan = async (dir: string, prefix: string): Promise<void> => {
+      let items: string[];
+      try {
+        items = await fsp.readdir(dir);
+      } catch {
+        return;
+      }
+      for (const item of items) {
+        const fullPath = path.join(dir, item);
+        const stat = await fsp.stat(fullPath);
+        if (stat.isDirectory()) {
+          await scan(fullPath, `${prefix}${item}/`);
+        } else if (SHARED_FILE_EXTENSIONS.has(path.extname(item))) {
+          const key = `${prefix}${item}`;
+          const fileUrl = `file://${fullPath}`;
+          entries.set(key, fileUrl);
+        }
+      }
+    };
+
+    for (const folderPath of this.#sharedFolderPaths) {
+      const folderName = path.basename(folderPath);
+      await scan(folderPath, `${folderName}/`);
+    }
+
+    return entries;
+  }
+
+  async #generateImportMap(): Promise<void> {
+    // Clean up previous temp file (from hot-reload regeneration)
+    if (this.#importMapFile) {
+      await fsp.rm(this.#importMapFile, { force: true });
+      this.#importMapFile = undefined;
+    }
+
+    const sharedEntries = await this.#scanSharedFiles();
+    if (sharedEntries.size === 0 && !this.#options.importMapPath) return;
+
+    // Start with auto-generated entries
+    const imports: Record<string, string> = {};
+    for (const [key, value] of sharedEntries) {
+      imports[key] = value;
+    }
+
+    // Merge user import map / config imports (user takes precedence)
+    let scopes: Record<string, Record<string, string>> | undefined;
+    const userMapSources: { filePath: string }[] = [];
+    if (this.#options.importMapPath) {
+      userMapSources.push({ filePath: this.#options.importMapPath });
+    }
+    if (this.#options.configPath) {
+      userMapSources.push({ filePath: this.#options.configPath });
+    }
+    for (const { filePath } of userMapSources) {
+      try {
+        const content = await fsp.readFile(filePath, "utf-8");
+        const parsed = JSON.parse(content);
+        const baseDir = path.dirname(path.resolve(filePath));
+        if (parsed.imports) {
+          for (const [key, value] of Object.entries(parsed.imports)) {
+            // Resolve relative paths against the source file's directory
+            if (typeof value === "string" && (value.startsWith("./") || value.startsWith("../"))) {
+              imports[key] = `file://${path.resolve(baseDir, value)}`;
+            } else {
+              imports[key] = value as string;
+            }
+          }
+        }
+        if (parsed.scopes && !scopes) {
+          scopes = parsed.scopes;
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+
+    const importMap: Record<string, unknown> = { imports };
+    if (scopes) {
+      importMap.scopes = scopes;
+    }
+
+    // Write to temp file
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `deno-edge-import-map-${crypto.randomUUID()}.json`
+    );
+    await fsp.writeFile(tmpFile, JSON.stringify(importMap, null, 2));
+    this.#importMapFile = tmpFile;
   }
 
   async #handleRequest(request: Request): Promise<Response> {
@@ -576,7 +682,23 @@ export class EdgeFunctionServer {
   ): Promise<DenoHTTPWorker> {
     const userOptions = this.#options.workerOptions ?? {};
     const defaultRunFlags = ["--allow-net", "--allow-env"];
-    const runFlags = userOptions.runFlags ?? defaultRunFlags;
+    const runFlags = [...(userOptions.runFlags ?? defaultRunFlags)];
+
+    // Append shared folder read permissions
+    if (this.#sharedFolderPaths.length > 0) {
+      const sharedPaths = this.#sharedFolderPaths.join(",");
+      const hasFullRead = runFlags.includes("--allow-read") || runFlags.includes("--allow-all");
+      if (!hasFullRead) {
+        const existingIdx = runFlags.findIndex((f) =>
+          f.startsWith("--allow-read=")
+        );
+        if (existingIdx !== -1) {
+          runFlags[existingIdx] += `,${sharedPaths}`;
+        } else {
+          runFlags.push(`--allow-read=${sharedPaths}`);
+        }
+      }
+    }
 
     // Layer 5: per-function .env
     const functionDir = path.dirname(entrypoint);
@@ -630,7 +752,10 @@ export class EdgeFunctionServer {
       denoBootstrapScriptPath:
         userOptions.denoBootstrapScriptPath ?? SERVE_BOOTSTRAP_PATH,
       runFlags,
-      importMapPath: this.#options.importMapPath ?? userOptions.importMapPath,
+      importMapPath:
+        this.#importMapFile ??
+        this.#options.importMapPath ??
+        userOptions.importMapPath,
       configPath: this.#options.configPath ?? userOptions.configPath,
       env: mergedEnv,
       ...(logLevel ? { logLevel } : {}),
