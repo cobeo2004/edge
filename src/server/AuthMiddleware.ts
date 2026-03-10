@@ -25,7 +25,10 @@ export class AuthMiddleware {
     this.#onAuthFailure = options.onAuthFailure;
   }
 
-  #unauthorizedResponse(result: AuthResult, request: Request): Response | Promise<Response> {
+  #unauthorizedResponse(
+    result: AuthResult,
+    request: Request
+  ): Response | Promise<Response> {
     if (this.#onAuthFailure) {
       return this.#onAuthFailure(request, result);
     }
@@ -58,9 +61,7 @@ export class AuthMiddleware {
         const result: AuthResult = {
           valid: false,
           error:
-            err instanceof Error
-              ? err.message
-              : "Credential extraction failed",
+            err instanceof Error ? err.message : "Credential extraction failed",
         };
         return this.#unauthorizedResponse(result, ctx.request);
       }

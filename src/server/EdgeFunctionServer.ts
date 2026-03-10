@@ -111,9 +111,7 @@ export class EdgeFunctionServer {
             this.#options.configPath
           );
           const workerNames = this.#pool.getActiveWorkerNames();
-          await Promise.all(
-            workerNames.map((n) => this.#pool.restart(n))
-          );
+          await Promise.all(workerNames.map((n) => this.#pool.restart(n)));
         }
       );
     }

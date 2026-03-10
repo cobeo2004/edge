@@ -1,9 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  type DenoHTTPWorker,
-  newDenoHTTPWorker,
-} from "../worker/index.js";
+import { type DenoHTTPWorker, newDenoHTTPWorker } from "../worker/index.js";
 import { loadEnvFile, createSecretMasker } from "../env/index.js";
 import { resolvePermissionFlags } from "../permissions/profiles.js";
 import type { FunctionRegistry } from "./FunctionRegistry.js";
@@ -122,10 +119,7 @@ export class WorkerPool {
   }
 
   incrementRequestCount(name: string): void {
-    this.#requestCounts.set(
-      name,
-      (this.#requestCounts.get(name) ?? 0) + 1
-    );
+    this.#requestCounts.set(name, (this.#requestCounts.get(name) ?? 0) + 1);
   }
 
   terminateAll(): void {
@@ -247,7 +241,8 @@ export class WorkerPool {
       env: mergedEnv,
       ...(logLevel ? { logLevel } : {}),
       ...(onLog ? { onLog } : {}),
-      memoryLimitMb: userOptions.memoryLimitMb ?? this.#serverOptions.memoryLimitMb,
+      memoryLimitMb:
+        userOptions.memoryLimitMb ?? this.#serverOptions.memoryLimitMb,
       requestTimeout:
         userOptions.requestTimeout ?? this.#serverOptions.requestTimeout,
       workerMaxDuration:
