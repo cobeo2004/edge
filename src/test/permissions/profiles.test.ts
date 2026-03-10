@@ -12,7 +12,6 @@ describe("Permission profiles", () => {
       expect(BUILT_IN_PROFILES.standard).toEqual([
         "--allow-net",
         "--allow-env",
-        "--allow-read",
       ]);
       expect(BUILT_IN_PROFILES.permissive).toEqual(["--allow-all"]);
     });
@@ -45,7 +44,7 @@ describe("Permission profiles", () => {
 
     it("defaults to standard when no profile specified", () => {
       const flags = resolvePermissionFlags(undefined, {});
-      expect(flags).toEqual(["--allow-net", "--allow-env", "--allow-read"]);
+      expect(flags).toEqual(["--allow-net", "--allow-env"]);
     });
 
     it("uses defaultProfile when no per-function override", () => {

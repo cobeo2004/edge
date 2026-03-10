@@ -341,14 +341,17 @@ const server = new EdgeFunctionServer({
 
 ### Auth claims forwarding
 
-When authentication succeeds, decoded claims are forwarded to the worker via the `X-Auth-Claims` header as a JSON string. Inside your Deno function:
+When authentication succeeds, decoded claims are forwarded to the worker via the `X-Auth-Claims` header as a **base64url-encoded** JSON string. Inside your Deno function:
 
 ```ts
 Deno.serve((req) => {
-  const claims = JSON.parse(req.headers.get("x-auth-claims") ?? "{}");
+  const raw = req.headers.get("x-auth-claims") ?? "";
+  const claims = raw ? JSON.parse(atob(raw)) : {};
   return Response.json({ user: claims.sub, role: claims.role });
 });
 ```
+
+> **Note:** The header is always stripped from incoming requests to prevent spoofing. It is only set by the server when authentication succeeds with claims.
 
 ### Public functions (auth opt-out)
 
@@ -398,10 +401,10 @@ Control Deno permission flags per function using named profiles instead of manua
 | ------------ | ---------------------------------------- |
 | `none`       | _(socket access only)_                   |
 | `strict`     | `--allow-net`                            |
-| `standard`   | `--allow-net --allow-env --allow-read`   |
+| `standard`   | `--allow-net --allow-env`                |
 | `permissive` | `--allow-all`                            |
 
-The default profile is `"standard"` (matching the previous default behavior).
+The default profile is `"standard"`. The factory automatically adds scoped `--allow-read` for socket, script, and import map paths, so `standard` does not include a blanket `--allow-read`.
 
 ### Server-level configuration
 

@@ -1,7 +1,7 @@
 export const BUILT_IN_PROFILES: Record<string, string[]> = {
   none: [],
   strict: ["--allow-net"],
-  standard: ["--allow-net", "--allow-env", "--allow-read"],
+  standard: ["--allow-net", "--allow-env"],
   permissive: ["--allow-all"],
 };
 

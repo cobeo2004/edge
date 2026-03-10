@@ -7,7 +7,8 @@ import type { FunctionConfig } from "./types.js";
  * Returns an empty object if the file doesn't exist or is invalid.
  */
 export async function loadFunctionConfig(
-  functionDir: string
+  functionDir: string,
+  onError?: (error: Error) => void
 ): Promise<FunctionConfig> {
   const configPath = path.join(functionDir, "function.json");
   try {
@@ -27,7 +28,11 @@ export async function loadFunctionConfig(
     }
 
     return config;
-  } catch {
+  } catch (err) {
+    // Only call onError for parse errors, not missing files
+    if (err instanceof SyntaxError) {
+      onError?.(err);
+    }
     return {};
   }
 }

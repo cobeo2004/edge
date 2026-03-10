@@ -13,7 +13,10 @@ import {
 import { loadEnvFile, createSecretMasker } from "../env/index.js";
 import type { AuthResult, AuthStrategy } from "../auth/types.js";
 import { loadFunctionConfig } from "../permissions/config.js";
-import { resolvePermissionFlags } from "../permissions/profiles.js";
+import {
+  BUILT_IN_PROFILES,
+  resolvePermissionFlags,
+} from "../permissions/profiles.js";
 import type { FunctionConfig } from "../permissions/types.js";
 import type { AdapterServer, ServerAdapter } from "./adapters/types.js";
 import type { RuntimeName } from "./adapters/detect.js";
@@ -262,6 +265,7 @@ export class EdgeFunctionServer {
 
   async #scanFunctions(): Promise<void> {
     this.#functions.clear();
+    this.#functionConfigs.clear();
     this.#sharedFolderPaths = [];
     let entries: string[];
     try {
@@ -269,6 +273,13 @@ export class EdgeFunctionServer {
     } catch {
       return;
     }
+
+    // Build lookup of all known profile names for validation
+    const allProfiles: Record<string, string[]> = {
+      ...BUILT_IN_PROFILES,
+      ...this.#options.permissionProfiles,
+    };
+
     for (const entry of entries) {
       const dirPath = path.join(this.#options.functionsDir, entry);
       const stat = await fsp.stat(dirPath);
@@ -285,8 +296,26 @@ export class EdgeFunctionServer {
         try {
           await fsp.stat(candidate);
           this.#functions.set(entry, candidate);
-          const fnConfig = await loadFunctionConfig(dirPath);
+          const fnConfig = await loadFunctionConfig(dirPath, (err) => {
+            this.#options.onFunctionError?.(
+              entry,
+              new Error(`Invalid function.json: ${err.message}`)
+            );
+          });
           this.#functionConfigs.set(entry, fnConfig);
+
+          // Validate permission profile name at scan time
+          if (typeof fnConfig.permissions === "string") {
+            if (!allProfiles[fnConfig.permissions]) {
+              this.#options.onFunctionError?.(
+                entry,
+                new Error(
+                  `Unknown permission profile "${fnConfig.permissions}" in function.json`
+                )
+              );
+            }
+          }
+
           break;
         } catch {
           // try next
@@ -430,8 +459,31 @@ export class EdgeFunctionServer {
         this.#functionConfigs.get(functionName)?.auth === false;
 
       if (!isPublic) {
-        const credentials =
-          await this.#options.auth.extractCredentials(request);
+        let credentials: string | null;
+        try {
+          credentials = await this.#options.auth.extractCredentials(request);
+        } catch (err) {
+          const result: AuthResult = {
+            valid: false,
+            error:
+              err instanceof Error
+                ? err.message
+                : "Credential extraction failed",
+          };
+          if (this.#options.onAuthFailure) {
+            return this.#options.onAuthFailure(request, result);
+          }
+          return new Response(
+            JSON.stringify({
+              error: "Unauthorized",
+              message: result.error,
+            }),
+            {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
 
         if (!credentials) {
           const result: AuthResult = {
@@ -453,7 +505,15 @@ export class EdgeFunctionServer {
           );
         }
 
-        const authResult = await this.#options.auth.verify(credentials);
+        let authResult: AuthResult;
+        try {
+          authResult = await this.#options.auth.verify(credentials);
+        } catch (err) {
+          authResult = {
+            valid: false,
+            error: err instanceof Error ? err.message : "Verification failed",
+          };
+        }
 
         if (!authResult.valid) {
           if (this.#options.onAuthFailure) {
@@ -494,8 +554,12 @@ export class EdgeFunctionServer {
     request.headers.forEach((value, key) => {
       headers[key] = value;
     });
+    // Always strip x-auth-claims to prevent spoofing from clients
+    delete headers["x-auth-claims"];
     if (authClaims) {
-      headers["x-auth-claims"] = JSON.stringify(authClaims);
+      headers["x-auth-claims"] = Buffer.from(
+        JSON.stringify(authClaims)
+      ).toString("base64url");
     }
 
     const startTime = Date.now();
