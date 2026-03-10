@@ -4,11 +4,11 @@ import type { AuthResult, AuthStrategy } from "../../auth/types.js";
 describe("Auth types", () => {
   it("AuthStrategy interface is implementable", () => {
     const strategy: AuthStrategy = {
-      async extractCredentials(_request: Request) {
-        return "test-token";
+      extractCredentials(_request: Request) {
+        return Promise.resolve("test-token");
       },
-      async verify(_credentials: string) {
-        return { valid: true, claims: { sub: "user-1" } };
+      verify(_credentials: string) {
+        return Promise.resolve({ valid: true, claims: { sub: "user-1" } });
       },
     };
     expect(strategy).toBeDefined();

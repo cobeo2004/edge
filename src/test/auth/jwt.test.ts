@@ -127,7 +127,7 @@ describe("JWTStrategy", { timeout: 10_000 }, () => {
         res.end(JSON.stringify({ keys: [publicJWK] }));
       });
       await new Promise<void>((resolve) => jwksServer.listen(0, resolve));
-      const jwksPort = (jwksServer.address() as any).port;
+      const jwksPort = (jwksServer.address() as { port: number }).port;
 
       try {
         const strategy = new JWTStrategy({

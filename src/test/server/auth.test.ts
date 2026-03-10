@@ -8,7 +8,7 @@ import type { AuthStrategy } from "../../auth/types.js";
 
 const SECRET = "test-secret-that-is-long-enough-for-hs256!!!!!";
 
-async function makeToken(
+function makeToken(
   claims: Record<string, unknown> = { sub: "user-1" }
 ): Promise<string> {
   return new SignJWT(claims)
@@ -149,14 +149,14 @@ describe("EdgeFunctionServer – auth", { timeout: 15_000 }, () => {
 
   it("uses custom AuthStrategy implementation", async () => {
     const apiKeyStrategy: AuthStrategy = {
-      async extractCredentials(request: Request) {
-        return request.headers.get("x-api-key");
+      extractCredentials(request: Request) {
+        return Promise.resolve(request.headers.get("x-api-key"));
       },
-      async verify(credentials: string) {
+      verify(credentials: string) {
         if (credentials === "valid-key") {
-          return { valid: true, claims: { keyId: "k1" } };
+          return Promise.resolve({ valid: true, claims: { keyId: "k1" } });
         }
-        return { valid: false, error: "Invalid API key" };
+        return Promise.resolve({ valid: false, error: "Invalid API key" });
       },
     };
 
