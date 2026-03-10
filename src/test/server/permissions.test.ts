@@ -13,9 +13,7 @@ describe(
     let tmpFunctionsDir: string;
 
     beforeEach(async () => {
-      tmpFunctionsDir = await fsp.mkdtemp(
-        path.join(os.tmpdir(), "perm-test-")
-      );
+      tmpFunctionsDir = await fsp.mkdtemp(path.join(os.tmpdir(), "perm-test-"));
     });
 
     afterEach(async () => {

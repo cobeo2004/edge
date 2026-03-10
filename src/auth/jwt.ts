@@ -46,7 +46,7 @@ export class JWTStrategy implements AuthStrategy {
       const value = request.headers.get(headerName);
       if (!value) return null;
       const match = value.match(/^Bearer\s+(.+)$/i);
-      return match ? match[1] ?? null : null;
+      return match ? (match[1] ?? null) : null;
     }
 
     if (location === "query") {
@@ -94,7 +94,11 @@ export class JWTStrategy implements AuthStrategy {
       if (this.#jwks) {
         result = await jwtVerify(credentials, this.#jwks, options);
       } else {
-        result = await jwtVerify(credentials, keyOrJwks as CryptoKey | Uint8Array, options);
+        result = await jwtVerify(
+          credentials,
+          keyOrJwks as CryptoKey | Uint8Array,
+          options
+        );
       }
 
       return {
@@ -109,7 +113,10 @@ export class JWTStrategy implements AuthStrategy {
     }
   }
 
-  #resolveKey(): CryptoKey | Uint8Array | ReturnType<typeof createRemoteJWKSet> {
+  #resolveKey():
+    | CryptoKey
+    | Uint8Array
+    | ReturnType<typeof createRemoteJWKSet> {
     if (this.#jwks) return this.#jwks;
     if (this.#options.key) return this.#options.key;
     if (this.#options.secret) {

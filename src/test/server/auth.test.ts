@@ -4,7 +4,7 @@ import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
 import { JWTStrategy } from "../../auth/jwt.js";
 import { httpRequest } from "../helpers/http.js";
 import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
-import type { AuthResult, AuthStrategy } from "../../auth/types.js";
+import type { AuthStrategy } from "../../auth/types.js";
 
 const SECRET = "test-secret-that-is-long-enough-for-hs256!!!!!";
 

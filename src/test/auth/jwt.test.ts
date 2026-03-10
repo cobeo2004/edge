@@ -3,7 +3,10 @@ import { SignJWT, generateKeyPair, exportJWK } from "jose";
 import { JWTStrategy } from "../../auth/jwt.js";
 import http from "node:http";
 
-function makeRequest(token?: string, opts?: { headerName?: string; method?: string }): Request {
+function makeRequest(
+  token?: string,
+  opts?: { headerName?: string; method?: string }
+): Request {
   const headers: Record<string, string> = {};
   if (token) {
     headers[opts?.headerName ?? "authorization"] = `Bearer ${token}`;
@@ -53,7 +56,9 @@ describe("JWTStrategy", { timeout: 10_000 }, () => {
       const token = await new SignJWT({ sub: "user-1" })
         .setProtectedHeader({ alg: "HS256" })
         .setExpirationTime("1h")
-        .sign(new TextEncoder().encode("wrong-secret-that-is-long-enough!!!!!"));
+        .sign(
+          new TextEncoder().encode("wrong-secret-that-is-long-enough!!!!!")
+        );
 
       const result = await strategy.verify(token);
       expect(result.valid).toBe(false);

@@ -39,10 +39,7 @@ describe("Permission profiles", () => {
     });
 
     it("returns raw flags array as-is", () => {
-      const flags = resolvePermissionFlags(
-        ["--allow-net", "--allow-ffi"],
-        {}
-      );
+      const flags = resolvePermissionFlags(["--allow-net", "--allow-ffi"], {});
       expect(flags).toEqual(["--allow-net", "--allow-ffi"]);
     });
 
@@ -59,9 +56,9 @@ describe("Permission profiles", () => {
     });
 
     it("throws on unknown profile name", () => {
-      expect(() =>
-        resolvePermissionFlags("nonexistent", {})
-      ).toThrow('Unknown permission profile: "nonexistent"');
+      expect(() => resolvePermissionFlags("nonexistent", {})).toThrow(
+        'Unknown permission profile: "nonexistent"'
+      );
     });
   });
 });

@@ -93,7 +93,10 @@ export interface EdgeFunctionServerOptions {
   /** Auth strategy instance. When set, all requests require authentication unless opted out */
   auth?: AuthStrategy;
   /** Custom response on auth failure. Default: 401 JSON */
-  onAuthFailure?: (request: Request, error: AuthResult) => Response | Promise<Response>;
+  onAuthFailure?: (
+    request: Request,
+    error: AuthResult
+  ) => Response | Promise<Response>;
   /** Functions that skip auth entirely (server-level override) */
   publicFunctions?: string[];
   /** Default permission profile for all functions. Default: "standard" */
