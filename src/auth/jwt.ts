@@ -1,11 +1,11 @@
-import { jwtVerify, createRemoteJWKSet, type JWTVerifyResult, type KeyLike } from "jose";
+import { jwtVerify, createRemoteJWKSet, type JWTVerifyResult } from "jose";
 import type { AuthResult, AuthStrategy } from "./types.js";
 
 export interface JWTStrategyOptions {
   /** HMAC shared secret (string) */
   secret?: string;
   /** Crypto key (RSA, EC, etc.) for direct verification */
-  key?: KeyLike | Uint8Array;
+  key?: CryptoKey | Uint8Array;
   /** JWKS endpoint URL for remote key fetching */
   jwksEndpoint?: string;
   /** Expected algorithms (if not set, inferred by jose) */
@@ -46,7 +46,7 @@ export class JWTStrategy implements AuthStrategy {
       const value = request.headers.get(headerName);
       if (!value) return null;
       const match = value.match(/^Bearer\s+(.+)$/i);
-      return match ? match[1] : null;
+      return match ? match[1] ?? null : null;
     }
 
     if (location === "query") {
@@ -62,7 +62,7 @@ export class JWTStrategy implements AuthStrategy {
       const cookies = cookieHeader.split(";").map((c) => c.trim());
       for (const cookie of cookies) {
         const [name, ...rest] = cookie.split("=");
-        if (name.trim() === key) {
+        if (name?.trim() === key) {
           return rest.join("=").trim();
         }
       }
@@ -90,11 +90,12 @@ export class JWTStrategy implements AuthStrategy {
         options.clockTolerance = this.#options.clockTolerance;
       }
 
-      const result: JWTVerifyResult = await jwtVerify(
-        credentials,
-        keyOrJwks,
-        options
-      );
+      let result: JWTVerifyResult;
+      if (this.#jwks) {
+        result = await jwtVerify(credentials, this.#jwks, options);
+      } else {
+        result = await jwtVerify(credentials, keyOrJwks as CryptoKey | Uint8Array, options);
+      }
 
       return {
         valid: true,
@@ -108,7 +109,7 @@ export class JWTStrategy implements AuthStrategy {
     }
   }
 
-  #resolveKey(): KeyLike | Uint8Array | ReturnType<typeof createRemoteJWKSet> {
+  #resolveKey(): CryptoKey | Uint8Array | ReturnType<typeof createRemoteJWKSet> {
     if (this.#jwks) return this.#jwks;
     if (this.#options.key) return this.#options.key;
     if (this.#options.secret) {
