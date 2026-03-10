@@ -1,5 +1,5 @@
 import path from "node:path";
-import { loadEnvFile } from "../env/index.js";
+import { filterSecretValues, loadEnvFile } from "../env/index.js";
 import type { AdapterServer } from "./adapters/types.js";
 import { resolveAdapter } from "./adapters/detect.js";
 import { FunctionRegistry } from "./FunctionRegistry.js";
@@ -12,14 +12,6 @@ import type {
   Middleware,
   RequestContext,
 } from "./types.js";
-
-const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
-
-function filterSecretValues(env: Record<string, string>): string[] {
-  return Object.entries(env)
-    .filter(([key]) => SECRET_KEY_PATTERN.test(key))
-    .map(([, value]) => value);
-}
 
 export class EdgeFunctionServer {
   #options: EdgeFunctionServerOptions;

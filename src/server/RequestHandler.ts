@@ -17,7 +17,7 @@ export class RequestHandler {
   }
 
   middleware(): Middleware {
-    return async (ctx: RequestContext) => {
+    return async (ctx: RequestContext, _next: () => Promise<Response>) => {
       const { request, functionName, url } = ctx;
 
       // Acquire worker

@@ -1,7 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type DenoHTTPWorker, newDenoHTTPWorker } from "../worker/index.js";
-import { loadEnvFile, createSecretMasker } from "../env/index.js";
+import {
+  createSecretMasker,
+  filterSecretValues,
+  loadEnvFile,
+} from "../env/index.js";
 import { resolvePermissionFlags } from "../permissions/profiles.js";
 import type { FunctionRegistry } from "./FunctionRegistry.js";
 import type { EdgeFunctionServerOptions } from "./types.js";
@@ -13,14 +17,6 @@ const SERVE_BOOTSTRAP_PATH = path.resolve(
   __dirname,
   "../../deno-bootstrap/serve.ts"
 );
-
-const SECRET_KEY_PATTERN = /SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|AUTH|PRIVATE/i;
-
-function filterSecretValues(env: Record<string, string>): string[] {
-  return Object.entries(env)
-    .filter(([key]) => SECRET_KEY_PATTERN.test(key))
-    .map(([, value]) => value);
-}
 
 export interface WorkerPoolOptions {
   registry: FunctionRegistry;

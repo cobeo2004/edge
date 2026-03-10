@@ -18,18 +18,15 @@ export async function resolveAdapter(
   const runtime = option ?? detectRuntime();
   switch (runtime) {
     case "bun": {
-      console.log("[AdapterResolver] Using Bun adapter");
       const { bunAdapter } = await import("./bun.js");
       return bunAdapter;
     }
     case "deno": {
-      console.log("[AdapterResolver] Using Deno adapter");
       const { denoAdapter } = await import("./deno.js");
       return denoAdapter;
     }
     case "node":
     default: {
-      console.log("[AdapterResolver] Using Node adapter");
       const { nodeAdapter } = await import("./node.js");
       return nodeAdapter;
     }
