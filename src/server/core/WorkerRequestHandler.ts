@@ -53,6 +53,9 @@ export class WorkerRequestHandler {
       // Track request
       const startTime = Date.now();
       this.#pool.incrementRequestCount(functionName);
+      this.#pool.incrementActiveRequests(functionName);
+
+      const pool = this.#pool;
 
       return new Promise<Response>((resolve, reject) => {
         const proxyReq = worker.request(
@@ -97,9 +100,11 @@ export class WorkerRequestHandler {
                 proxyRes.on("end", () => {
                   controller.close();
                   emitStats(statusCode, false);
+                  pool.decrementActiveRequests(functionName);
                 });
                 proxyRes.on("error", (err) => {
                   emitStats(statusCode, false);
+                  pool.decrementActiveRequests(functionName);
                   controller.error(err);
                 });
               },
@@ -122,6 +127,7 @@ export class WorkerRequestHandler {
             ? "Request timed out"
             : "Worker request failed";
           this.#emitStats(functionName, startTime, status, timedOut);
+          pool.decrementActiveRequests(functionName);
           resolve(
             new Response(JSON.stringify({ error: errorMsg }), {
               status,
