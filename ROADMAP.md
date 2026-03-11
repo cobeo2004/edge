@@ -99,6 +99,22 @@ Named permission profiles and per-function overrides:
 
 ## Phase 3 — Performance & Scaling (Medium Priority)
 
+### Cold/Warm Worker Lifecycle (Idle Timeout)
+
+**Status:** Done
+
+Workers now transition between cold (no process) and warm (running) states based on activity, mimicking Supabase Edge Functions behavior:
+
+- `idleTimeout` option on `EdgeFunctionServerOptions` (global, disabled by default)
+- Per-function override via `idleTimeout` in `function.json`
+- Active request tracking — idle timer only starts when all in-flight requests complete
+- `onFunctionCold(name)` callback when a worker is terminated due to idle timeout
+- Independent of `workerMaxDuration` (both timers run, whichever fires first wins)
+- Works with `eagerSpawn` — eagerly spawned workers go cold if no requests arrive within the timeout
+
+**Future (Approach 2 — extract WorkerLifecycleManager):**
+When Worker Pool / Concurrency lands, extract idle timeout + health checks + max duration + auto-scaling into a dedicated `WorkerLifecycleManager` class to keep `WorkerPool` focused on spawning and routing.
+
 ### Worker Pool / Concurrency
 
 **Status:** Not started
@@ -110,6 +126,7 @@ Supabase can run multiple isolates per function to handle concurrent requests. T
 - Round-robin or least-connections request routing
 - Auto-scaling based on queue depth or response latency
 - Idle worker recycling
+- Extract `WorkerLifecycleManager` from `WorkerPool` to manage all lifecycle concerns (idle timeout, health checks, max duration, scaling) in one place
 
 ### WebSocket Support
 
