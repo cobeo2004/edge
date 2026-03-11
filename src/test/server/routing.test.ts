@@ -24,6 +24,7 @@ describe("EdgeFunctionServer – routing", { timeout: 15_000 }, () => {
       "echo",
       "env-test",
       "hello",
+      "idle-custom",
       "import-map-test",
       "npm-import",
       "oom",

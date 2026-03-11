@@ -87,6 +87,12 @@ export class WorkerPool {
 
       this.#serverOptions.onFunctionReady?.(name);
       this.#startHealthCheck(name, worker);
+
+      // Start idle timer if no active requests (e.g., eager spawn)
+      if ((this.#activeRequests.get(name) ?? 0) === 0) {
+        this.#startIdleTimer(name);
+      }
+
       return worker;
     } catch (err) {
       this.#workerPromises.delete(name);

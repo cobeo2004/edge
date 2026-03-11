@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { httpRequest } from "../helpers/http.js";
-import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
+import { FUNCTIONS_DIR, IMPORT_MAP } from "../helpers/fixtures.js";
 
 describe("EdgeFunctionServer – idle timeout", { timeout: 30_000 }, () => {
   let server: EdgeFunctionServer | undefined;
@@ -186,5 +186,28 @@ describe("EdgeFunctionServer – idle timeout", { timeout: 30_000 }, () => {
 
     const res2 = await httpRequest(server.port, "/hello");
     expect(res2.status).toBe(200);
+  });
+
+  it("eagerly spawned workers go cold when idle", async () => {
+    const coldFunctions: string[] = [];
+    const readyFunctions: string[] = [];
+    server = new EdgeFunctionServer({
+      functionsDir: FUNCTIONS_DIR,
+      port: 0,
+      eagerSpawn: true,
+      idleTimeout: 500,
+      importMapPath: IMPORT_MAP,
+      workerOptions: {
+        runFlags: ["--allow-net", "--allow-env", "--allow-read"],
+      },
+      onFunctionReady: (name) => readyFunctions.push(name),
+      onFunctionCold: (name) => coldFunctions.push(name),
+    });
+    await server.start();
+
+    expect(readyFunctions.length).toBeGreaterThan(0);
+
+    await new Promise((r) => setTimeout(r, 800));
+    expect(coldFunctions.length).toBeGreaterThan(0);
   });
 });
