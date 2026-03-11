@@ -129,7 +129,9 @@ export class WorkerLifecycleManager {
 
     // Check for cold transition: 0 instances + 0 spawning = fully cold
     const shouldFireCold =
-      this.#instances.length === 0 && this.#spawningCount === 0 && this.#readyFired;
+      this.#instances.length === 0 &&
+      this.#spawningCount === 0 &&
+      this.#readyFired;
     if (shouldFireCold) {
       this.#readyFired = false;
     }
