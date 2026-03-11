@@ -162,4 +162,29 @@ describe("EdgeFunctionServer – idle timeout", { timeout: 30_000 }, () => {
     expect(res2.status).toBe(200);
     expect(readyFunctions).toContain("hello");
   });
+
+  it("worker crash during idle timer causes no errors", async () => {
+    const coldFunctions: string[] = [];
+    const errors: string[] = [];
+    server = new EdgeFunctionServer({
+      functionsDir: FUNCTIONS_DIR,
+      port: 0,
+      idleTimeout: 2000,
+      onFunctionCold: (name) => coldFunctions.push(name),
+      onFunctionError: (name, err) => errors.push(`${name}: ${err.message}`),
+    });
+    await server.start();
+
+    const res = await httpRequest(server.port, "/hello");
+    expect(res.status).toBe(200);
+
+    await server.restartFunction("hello");
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(coldFunctions).not.toContain("hello");
+    expect(errors).toHaveLength(0);
+
+    const res2 = await httpRequest(server.port, "/hello");
+    expect(res2.status).toBe(200);
+  });
 });
