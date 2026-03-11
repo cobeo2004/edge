@@ -75,6 +75,10 @@ export interface EdgeFunctionServerOptions {
   healthCheckMaxFailures?: number;
   /** Called when a worker is restarted due to failed health checks */
   onWorkerUnhealthy?: (name: string, consecutiveFailures: number) => void;
+  /** Idle timeout in ms. Worker terminates when idle for this duration. Disabled by default */
+  idleTimeout?: number;
+  /** Called when a worker is terminated due to idle timeout */
+  onFunctionCold?: (name: string) => void;
   /** Auth strategy instance. When set, all requests require authentication unless opted out */
   auth?: AuthStrategy;
   /** Custom response on auth failure. Default: 401 JSON */
