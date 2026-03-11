@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 
 const SERVE_BOOTSTRAP_PATH = path.resolve(
   __dirname,
-  "../../deno-bootstrap/serve.ts"
+  "../../../deno-bootstrap/serve.ts"
 );
 
 export interface WorkerPoolOptions {
