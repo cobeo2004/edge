@@ -19,3 +19,10 @@ export {
   resolveAdapter,
   nodeAdapter,
 } from "./adapters/index.js";
+
+export type {
+  WorkerInstance,
+  AcquireResult,
+  PoolStats,
+  InstanceStats,
+} from "./core/WorkerInstance.js";

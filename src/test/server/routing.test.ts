@@ -21,6 +21,7 @@ describe("EdgeFunctionServer – routing", { timeout: 15_000 }, () => {
     await server.start();
     const fns = server.listFunctions();
     expect(fns).toEqual([
+      "eager-override",
       "echo",
       "env-test",
       "hello",
@@ -28,6 +29,7 @@ describe("EdgeFunctionServer – routing", { timeout: 15_000 }, () => {
       "import-map-test",
       "npm-import",
       "oom",
+      "pool-test",
       "public",
       "shared-test",
       "slow",

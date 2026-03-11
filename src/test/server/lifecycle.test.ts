@@ -71,6 +71,7 @@ describe("EdgeFunctionServer – lifecycle", { timeout: 15_000 }, () => {
     await server.start();
 
     expect(readyFunctions.sort()).toEqual([
+      "eager-override",
       "echo",
       "env-test",
       "hello",
@@ -78,6 +79,7 @@ describe("EdgeFunctionServer – lifecycle", { timeout: 15_000 }, () => {
       "import-map-test",
       "npm-import",
       "oom",
+      "pool-test",
       "public",
       "shared-test",
       "slow",

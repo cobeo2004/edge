@@ -8,4 +8,10 @@ export interface FunctionConfig {
   auth?: boolean;
   /** Idle timeout in ms before worker goes cold. Overrides server-level idleTimeout */
   idleTimeout?: number;
+  /** Minimum number of worker instances for this function */
+  minWorkers?: number;
+  /** Maximum number of worker instances for this function */
+  maxWorkers?: number;
+  /** Whether to eagerly spawn workers for this function at startup */
+  eagerSpawn?: boolean;
 }

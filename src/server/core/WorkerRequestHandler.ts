@@ -1,4 +1,4 @@
-import type { DenoHTTPWorker, RequestStats } from "../../worker/index.js";
+import type { RequestStats } from "../../worker/index.js";
 import type { WorkerPool } from "./WorkerPool.js";
 import type { Middleware, RequestContext } from "../utils/types.js";
 
@@ -20,10 +20,10 @@ export class WorkerRequestHandler {
     return async (ctx: RequestContext, _next: () => Promise<Response>) => {
       const { request, functionName, url } = ctx;
 
-      // Acquire worker
-      let worker: DenoHTTPWorker;
+      // Acquire worker instance (least-loaded or freshly spawned)
+      let instance: Awaited<ReturnType<WorkerPool["getOrCreate"]>>;
       try {
-        worker = await this.#pool.getOrCreate(functionName);
+        instance = await this.#pool.getOrCreate(functionName);
       } catch (err) {
         this.#options.onFunctionError?.(functionName, err as Error);
         return new Response(
@@ -31,6 +31,8 @@ export class WorkerRequestHandler {
           { status: 502, headers: { "Content-Type": "application/json" } }
         );
       }
+
+      const { worker, id: instanceId } = instance;
 
       // Rewrite URL: strip the function name prefix
       const segments = url.pathname.split("/").filter(Boolean);
@@ -52,15 +54,14 @@ export class WorkerRequestHandler {
 
       // Track request
       const startTime = Date.now();
-      this.#pool.incrementRequestCount(functionName);
-      this.#pool.incrementActiveRequests(functionName);
+      this.#pool.incrementActiveRequests(functionName, instanceId);
 
       const pool = this.#pool;
       let decremented = false;
       const releaseActiveRequest = () => {
         if (decremented) return;
         decremented = true;
-        pool.decrementActiveRequests(functionName);
+        pool.decrementActiveRequests(functionName, instanceId);
       };
 
       try {

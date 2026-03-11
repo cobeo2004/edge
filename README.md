@@ -19,6 +19,7 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 - [Permission Profiles](#permission-profiles)
 - [Execution Limits](#execution-limits)
 - [Idle Timeout (Cold/Warm Lifecycle)](#idle-timeout-coldwarm-lifecycle)
+- [Worker Pool & Concurrency](#worker-pool--concurrency)
 - [Configuration](#configuration)
 - [Logging](#logging)
 - [Shared Folders](#shared-folders)
@@ -581,6 +582,70 @@ A function with `"idleTimeout": 60000` stays warm for 60 seconds even if the ser
 - Health check pings do not count as requests and do not reset the idle timer.
 - When `eagerSpawn` is enabled, eagerly spawned workers will go cold if no requests arrive within the idle timeout.
 
+## Worker Pool & Concurrency
+
+Run multiple worker instances per function to handle concurrent requests. Workers are managed by a `WorkerLifecycleManager` that handles spawning, load balancing, idle scale-down, health checks, and cold/warm transitions.
+
+### Basic configuration
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  minWorkers: 1, // minimum instances per function (default: 0)
+  maxWorkers: 4, // maximum instances per function (default: 1)
+  idleTimeout: 30_000, // scale down idle workers after 30s
+});
+```
+
+When `maxWorkers` is 1 (the default), behavior is identical to pre-concurrency versions — a single worker per function.
+
+### How scaling works
+
+- **Scale up:** When a request arrives and all existing workers are busy, a new worker is spawned (up to `maxWorkers`). Requests are routed to the least-loaded instance.
+- **Scale down:** Idle workers are terminated after `idleTimeout` ms, but never below `minWorkers`. When the last instance is removed, `onFunctionCold` fires.
+- **At capacity:** When all `maxWorkers` instances are busy and no spawn slots are available, requests are routed to the least-loaded worker (overload).
+
+### Per-function overrides
+
+Override pool settings per function via `function.json`:
+
+```json
+{ "minWorkers": 2, "maxWorkers": 8, "eagerSpawn": true }
+```
+
+Per-function values take priority over server-level defaults.
+
+### Eager spawning
+
+Pre-warm workers at startup instead of waiting for the first request:
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  eagerSpawn: true, // spawn max(minWorkers, 1) instances at startup
+  minWorkers: 2,
+  maxWorkers: 4,
+});
+```
+
+Per-function `eagerSpawn` in `function.json` overrides the server-level setting.
+
+### Lifecycle callbacks
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  maxWorkers: 4,
+  onFunctionReady: (name) => console.log(`${name} has at least one worker`),
+  onFunctionCold: (name) => console.log(`${name} has zero workers`),
+  onWorkerUnhealthy: (name, failures) =>
+    console.warn(`${name} restarted after ${failures} health check failures`),
+});
+```
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -630,8 +695,10 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `healthCheckTimeout`       | `number`                                              | Timeout in ms for each health-check ping (default: `5000`)                                      |
 | `healthCheckMaxFailures`   | `number`                                              | Consecutive failures before auto-restart (default: `3`)                                         |
 | `onWorkerUnhealthy`        | `(name: string, consecutiveFailures: number) => void` | Called when a worker is restarted due to failed health checks                                   |
+| `minWorkers`               | `number`                                              | Minimum worker instances per function (default: `0`)                                            |
+| `maxWorkers`               | `number`                                              | Maximum worker instances per function (default: `1`)                                            |
 | `idleTimeout`              | `number`                                              | Idle timeout in ms; worker terminates when idle (disabled by default)                           |
-| `onFunctionCold`           | `(name: string) => void`                              | Called when a worker is terminated due to idle timeout                                           |
+| `onFunctionCold`           | `(name: string) => void`                              | Called when last worker instance is terminated (zero workers remaining)                          |
 | `auth`                     | `AuthStrategy`                                        | Pluggable auth strategy (opt-in, disabled by default)                                           |
 | `onAuthFailure`            | `(request, error) => Response`                        | Custom response on auth failure (default: 401 JSON)                                             |
 | `publicFunctions`          | `string[]`                                            | Functions that skip auth entirely                                                               |

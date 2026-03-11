@@ -9,6 +9,12 @@ import {
 import { resolvePermissionFlags } from "../../permissions/profiles.js";
 import type { FunctionRegistry } from "./FunctionRegistry.js";
 import type { EdgeFunctionServerOptions } from "../utils/types.js";
+import { WorkerLifecycleManager } from "./WorkerLifecycleManager.js";
+import {
+  createWorkerInstance,
+  type WorkerInstance,
+  type PoolStats,
+} from "./WorkerInstance.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,18 +37,9 @@ export class WorkerPool {
   #envBase: Record<string, string>;
   #secretValues: string[];
 
-  #workers = new Map<string, DenoHTTPWorker>();
-  #workerPromises = new Map<string, Promise<DenoHTTPWorker>>();
-  #requestCounts = new Map<string, number>();
-  #workerSpawnTimes = new Map<string, number>();
-  #restartCounts = new Map<string, number>();
-  #healthCheckTimers = new Map<string, ReturnType<typeof setInterval>>();
-  #healthCheckFailures = new Map<string, number>();
-  #healthCheckInFlight = new Set<string>();
-
-  // --- Idle timeout state (grouped for future WorkerLifecycleManager extraction) ---
-  #activeRequests = new Map<string, number>();
-  #idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #managers = new Map<string, WorkerLifecycleManager>();
+  #workerPromises = new Map<string, Promise<WorkerInstance>>();
+  #disposed = false;
 
   constructor(options: WorkerPoolOptions) {
     this.#registry = options.registry;
@@ -51,132 +48,283 @@ export class WorkerPool {
     this.#secretValues = options.secretValues;
   }
 
-  async getOrCreate(name: string): Promise<DenoHTTPWorker> {
-    const existing = this.#workers.get(name);
-    if (existing) return existing;
+  async getOrCreate(name: string): Promise<WorkerInstance> {
+    if (this.#disposed) {
+      throw new Error("WorkerPool has been terminated");
+    }
+    const manager = this.#getOrCreateManager(name);
 
-    const inflight = this.#workerPromises.get(name);
-    if (inflight) return inflight;
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const result = manager.acquire();
 
+      switch (result.kind) {
+        case "instance":
+          return result.instance;
+
+        case "spawn": {
+          // Spawn slot already reserved atomically inside acquire()
+          const id = manager.nextId();
+          const dedupKey = `${name}-${id}`;
+
+          const existingPromise = this.#workerPromises.get(dedupKey);
+          if (existingPromise) {
+            manager.releaseSpawnSlot();
+            return existingPromise;
+          }
+
+          const promise = this.#spawnAndRegister(name, id, manager);
+          this.#workerPromises.set(dedupKey, promise);
+
+          try {
+            const instance = await promise;
+            return instance;
+          } finally {
+            this.#workerPromises.delete(dedupKey);
+            manager.releaseSpawnSlot();
+          }
+        }
+
+        case "wait":
+          await result.promise;
+          // Loop and retry acquire
+          continue;
+      }
+    }
+
+    // After max retries, return least-loaded (fallback)
+    const fallback = manager.acquire();
+    if (fallback.kind === "instance") return fallback.instance;
+    throw new Error(
+      `Failed to acquire worker for "${name}" after ${MAX_RETRIES} retries`
+    );
+  }
+
+  async #spawnAndRegister(
+    name: string,
+    id: string,
+    manager: WorkerLifecycleManager
+  ): Promise<WorkerInstance> {
     const entrypoint = this.#registry.getEntrypoint(name);
     if (!entrypoint) {
       throw new Error(`Function "${name}" not found`);
     }
 
-    const promise = this.#spawnWorker(name, entrypoint);
-    this.#workerPromises.set(name, promise);
+    const expectedGeneration = manager.generation;
+    const worker = await this.#spawnWorker(name, id, entrypoint);
 
-    try {
-      const worker = await promise;
-      this.#workers.set(name, worker);
-      this.#workerPromises.delete(name);
-
-      // Track spawn time; increment restart count if not first spawn
-      if (this.#workerSpawnTimes.has(name)) {
-        this.#restartCounts.set(name, (this.#restartCounts.get(name) ?? 0) + 1);
-      }
-      this.#workerSpawnTimes.set(name, Date.now());
-
-      // Auto-remove on exit so next request respawns
-      worker.addEventListener("exit", () => {
-        this.#clearIdleTimer(name);
-        this.#activeRequests.delete(name);
-        this.#stopHealthCheck(name);
-        this.#workers.delete(name);
-      });
-
-      this.#serverOptions.onFunctionReady?.(name);
-      this.#startHealthCheck(name, worker);
-
-      // Start idle timer if no active requests (e.g., eager spawn)
-      if ((this.#activeRequests.get(name) ?? 0) === 0) {
-        this.#startIdleTimer(name);
-      }
-
-      return worker;
-    } catch (err) {
-      this.#workerPromises.delete(name);
-      throw err;
+    if (this.#disposed) {
+      worker.terminate();
+      throw new Error("WorkerPool has been terminated");
     }
+
+    const instance = createWorkerInstance(id, name, worker);
+
+    // Auto-remove on exit so instance is cleaned up
+    worker.addEventListener("exit", () => {
+      manager.removeInstance(id);
+    });
+
+    const added = manager.addInstance(instance, expectedGeneration);
+    if (!added) {
+      throw new Error(
+        `Stale spawn for "${name}": generation changed during spawn`
+      );
+    }
+    return instance;
   }
 
   async restart(name: string): Promise<void> {
-    this.#clearIdleTimer(name);
-    this.#activeRequests.delete(name);
-    this.#stopHealthCheck(name);
-    const existing = this.#workers.get(name);
-    if (existing) {
-      existing.terminate();
-      this.#workers.delete(name);
+    const manager = this.#getOrCreateManager(name);
+    manager.restart();
+
+    // Clear any in-flight spawn promises for this function
+    for (const key of this.#workerPromises.keys()) {
+      if (key.startsWith(`${name}-`)) {
+        this.#workerPromises.delete(key);
+      }
     }
-    this.#workerPromises.delete(name);
+
     if (this.#registry.hasFunction(name)) {
-      await this.getOrCreate(name);
+      const count = Math.min(
+        Math.max(manager.minWorkers, 1),
+        manager.maxWorkers
+      );
+      await Promise.all(
+        Array.from({ length: count }, () => this.getOrCreate(name))
+      );
     }
   }
 
-  getStats(name: string): {
-    totalRequests: number;
-    uptimeMs: number;
-    restartCount: number;
-  } {
-    const spawnTime = this.#workerSpawnTimes.get(name);
-    return {
-      totalRequests: this.#requestCounts.get(name) ?? 0,
-      uptimeMs: spawnTime ? Date.now() - spawnTime : 0,
-      restartCount: this.#restartCounts.get(name) ?? 0,
-    };
+  getStats(name: string): PoolStats {
+    const manager = this.#managers.get(name);
+    if (!manager) {
+      return {
+        functionName: name,
+        instanceCount: 0,
+        totalRequests: 0,
+        activeRequests: 0,
+        restartCount: 0,
+        instances: [],
+      };
+    }
+    return manager.getStats();
   }
 
-  incrementRequestCount(name: string): void {
-    this.#requestCounts.set(name, (this.#requestCounts.get(name) ?? 0) + 1);
+  /** @deprecated Use incrementActiveRequests instead. Kept for backward compat. */
+  incrementRequestCount(_name: string): void {
+    // No-op: totalRequests is now tracked per-instance inside
+    // manager.incrementActiveRequests(). This method is kept to avoid
+    // breaking external callers but does nothing.
+  }
+
+  incrementActiveRequests(name: string, instanceId: string): void {
+    const manager = this.#managers.get(name);
+    manager?.incrementActiveRequests(instanceId);
+  }
+
+  decrementActiveRequests(name: string, instanceId: string): void {
+    const manager = this.#managers.get(name);
+    manager?.decrementActiveRequests(instanceId);
   }
 
   terminateAll(): void {
-    this.clearAllIdleTimers();
-    for (const worker of this.#workers.values()) {
-      worker.terminate();
+    this.#disposed = true;
+    for (const manager of this.#managers.values()) {
+      manager.dispose();
     }
-    this.#workers.clear();
+    this.#managers.clear();
     this.#workerPromises.clear();
   }
 
   stopAllHealthChecks(): void {
-    for (const name of [...this.#healthCheckTimers.keys()]) {
-      this.#stopHealthCheck(name);
+    for (const manager of this.#managers.values()) {
+      manager.stopAllHealthChecks();
     }
   }
 
   getActiveWorkerNames(): string[] {
-    return [...this.#workers.keys()];
-  }
-
-  incrementActiveRequests(name: string): void {
-    this.#clearIdleTimer(name);
-    this.#activeRequests.set(name, (this.#activeRequests.get(name) ?? 0) + 1);
-  }
-
-  decrementActiveRequests(name: string): void {
-    // If the worker has already exited, don't reintroduce stale state
-    if (!this.#workers.has(name)) {
-      this.#activeRequests.delete(name);
-      return;
+    const names: string[] = [];
+    for (const [name, manager] of this.#managers) {
+      if (manager.hasInstances()) {
+        names.push(name);
+      }
     }
-    const count = Math.max(0, (this.#activeRequests.get(name) ?? 0) - 1);
-    this.#activeRequests.set(name, count);
-    if (count === 0) {
-      this.#startIdleTimer(name);
-    }
+    return names;
   }
 
   clearAllIdleTimers(): void {
-    for (const name of [...this.#idleTimers.keys()]) {
-      this.#clearIdleTimer(name);
+    for (const manager of this.#managers.values()) {
+      manager.clearAllIdleTimers();
     }
+  }
+
+  // --- Eager spawn support ---
+
+  async eagerSpawn(names: string[]): Promise<void> {
+    const promises: Promise<unknown>[] = [];
+    for (const name of names) {
+      const fnConfig = this.#registry.getFunctionConfig(name);
+      const serverEager = this.#serverOptions.eagerSpawn ?? false;
+      const fnEager = fnConfig?.eagerSpawn;
+
+      // Per-function override wins, then server-level
+      const shouldEagerSpawn = fnEager !== undefined ? fnEager : serverEager;
+      if (!shouldEagerSpawn) continue;
+
+      const mgr = this.#getOrCreateManager(name);
+      const count = Math.min(Math.max(mgr.minWorkers, 1), mgr.maxWorkers);
+      for (let i = 0; i < count; i++) {
+        promises.push(this.getOrCreate(name));
+      }
+    }
+    await Promise.all(promises);
+  }
+
+  // --- Private helpers ---
+
+  #getOrCreateManager(name: string): WorkerLifecycleManager {
+    let manager = this.#managers.get(name);
+    if (manager) return manager;
+
+    const fnConfig = this.#registry.getFunctionConfig(name);
+    const rawMin = fnConfig?.minWorkers ?? this.#serverOptions.minWorkers ?? 0;
+    const rawMax = fnConfig?.maxWorkers ?? this.#serverOptions.maxWorkers ?? 1;
+
+    // Validate with warnings
+    let validMin = Number.isInteger(rawMin) ? rawMin : Math.floor(rawMin);
+    let validMax = Number.isInteger(rawMax) ? rawMax : Math.floor(rawMax);
+    if (rawMin < 0) {
+      console.warn(
+        `[edge] "${name}": minWorkers (${rawMin}) < 0, defaulting to 0`
+      );
+      validMin = 0;
+    }
+    if (rawMax < 1) {
+      console.warn(
+        `[edge] "${name}": maxWorkers (${rawMax}) < 1, defaulting to 1`
+      );
+      validMax = 1;
+    }
+    if (validMin > validMax) {
+      console.warn(
+        `[edge] "${name}": minWorkers (${validMin}) > maxWorkers (${validMax}), clamping minWorkers to ${validMax}`
+      );
+      validMin = validMax;
+    }
+    const finalMin = validMin;
+
+    const idleTimeout =
+      fnConfig?.idleTimeout ?? this.#serverOptions.idleTimeout;
+    const healthCheckConfig = this.#resolveHealthCheckConfig();
+
+    manager = new WorkerLifecycleManager({
+      functionName: name,
+      minWorkers: finalMin,
+      maxWorkers: validMax,
+      idleTimeout,
+      healthCheckConfig: healthCheckConfig ?? undefined,
+      onFunctionCold: this.#serverOptions.onFunctionCold,
+      onFunctionReady: this.#serverOptions.onFunctionReady,
+      onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
+      onNeedSpawn: (fnName) => {
+        // Health check detected we're below minWorkers — spawn replacement
+        this.getOrCreate(fnName).catch((err) => {
+          this.#serverOptions.onFunctionError?.(fnName, err as Error);
+        });
+      },
+    });
+
+    this.#managers.set(name, manager);
+    return manager;
+  }
+
+  #resolveHealthCheckConfig(): {
+    interval: number;
+    timeout: number;
+    maxFailures: number;
+  } | null {
+    const workerOpts = this.#serverOptions.workerOptions ?? {};
+    const interval =
+      workerOpts.healthCheckInterval ?? this.#serverOptions.healthCheckInterval;
+    if (interval === undefined) return null;
+
+    return {
+      interval,
+      timeout:
+        workerOpts.healthCheckTimeout ??
+        this.#serverOptions.healthCheckTimeout ??
+        5000,
+      maxFailures:
+        workerOpts.healthCheckMaxFailures ??
+        this.#serverOptions.healthCheckMaxFailures ??
+        3,
+    };
   }
 
   async #spawnWorker(
     name: string,
+    instanceId: string,
     entrypoint: string
   ): Promise<DenoHTTPWorker> {
     const userOptions = this.#serverOptions.workerOptions ?? {};
@@ -184,7 +332,6 @@ export class WorkerPool {
     // Resolve permission flags: functionPermissions > function.json > defaultProfile > "standard"
     let runFlags: string[];
     if (userOptions.runFlags) {
-      // Explicit runFlags in workerOptions take absolute priority
       runFlags = [...userOptions.runFlags];
     } else {
       const serverOverride = this.#serverOptions.functionPermissions?.[name];
@@ -220,7 +367,7 @@ export class WorkerPool {
     const functionDir = path.dirname(entrypoint);
     const perFunctionEnv = await loadEnvFile(path.join(functionDir, ".env"));
 
-    // Merge all layers: base (global + envFiles + programmatic) → per-function → workerOptions.env
+    // Merge all layers
     const mergedEnv: Record<string, string> = {
       ...this.#envBase,
       ...perFunctionEnv,
@@ -248,9 +395,9 @@ export class WorkerPool {
     } else if (logLevel && logLevel !== "silent" && !onLog) {
       onLog = (_level, source, message) => {
         if (source === "stderr") {
-          console.error(`[deno:${name}]`, message);
+          console.error(`[deno:${instanceId}]`, message);
         } else {
-          console.log(`[deno:${name}]`, message);
+          console.log(`[deno:${instanceId}]`, message);
         }
       };
     }
@@ -283,155 +430,5 @@ export class WorkerPool {
       workerMaxDuration:
         userOptions.workerMaxDuration ?? this.#serverOptions.workerMaxDuration,
     });
-  }
-
-  #startHealthCheck(name: string, worker: DenoHTTPWorker): void {
-    const config = this.#resolveHealthCheckConfig();
-    if (!config) return;
-
-    this.#healthCheckFailures.set(name, 0);
-
-    const timer = setInterval(async () => {
-      // Skip if this worker has been replaced
-      if (this.#workers.get(name) !== worker) return;
-      // Skip if a health check is already in-flight for this worker
-      if (this.#healthCheckInFlight.has(name)) return;
-      this.#healthCheckInFlight.add(name);
-
-      let req: ReturnType<DenoHTTPWorker["request"]> | undefined;
-      const healthy = await new Promise<boolean>((resolve) => {
-        const timeoutId = setTimeout(() => {
-          req?.destroy();
-          resolve(false);
-        }, config.timeout);
-        try {
-          req = worker.request(
-            "http://deno/__health",
-            { method: "GET" },
-            (res) => {
-              res.on("data", () => {});
-              res.on("end", () => {
-                clearTimeout(timeoutId);
-                resolve(true);
-              });
-              res.on("error", () => {
-                clearTimeout(timeoutId);
-                resolve(false);
-              });
-            }
-          );
-          req.on("error", () => {
-            clearTimeout(timeoutId);
-            resolve(false);
-          });
-          req.end();
-        } catch {
-          clearTimeout(timeoutId);
-          resolve(false);
-        }
-      });
-
-      this.#healthCheckInFlight.delete(name);
-
-      // Worker might have been replaced while the health check was in-flight
-      if (this.#workers.get(name) !== worker) return;
-
-      if (healthy) {
-        this.#healthCheckFailures.set(name, 0);
-        return;
-      }
-
-      const failures = (this.#healthCheckFailures.get(name) ?? 0) + 1;
-      this.#healthCheckFailures.set(name, failures);
-
-      if (failures >= config.maxFailures) {
-        this.#stopHealthCheck(name);
-        this.#serverOptions.onWorkerUnhealthy?.(name, failures);
-        const existing = this.#workers.get(name);
-        if (existing) {
-          existing.terminate();
-          this.#workers.delete(name);
-        }
-        this.#workerPromises.delete(name);
-        if (this.#registry.hasFunction(name)) {
-          this.getOrCreate(name).catch((err) => {
-            this.#serverOptions.onFunctionError?.(name, err as Error);
-          });
-        }
-      }
-    }, config.interval);
-
-    this.#healthCheckTimers.set(name, timer);
-  }
-
-  #stopHealthCheck(name: string): void {
-    const timer = this.#healthCheckTimers.get(name);
-    if (timer) {
-      clearInterval(timer);
-      this.#healthCheckTimers.delete(name);
-    }
-    this.#healthCheckFailures.delete(name);
-  }
-
-  #resolveHealthCheckConfig(): {
-    interval: number;
-    timeout: number;
-    maxFailures: number;
-  } | null {
-    const workerOpts = this.#serverOptions.workerOptions ?? {};
-    const interval =
-      workerOpts.healthCheckInterval ?? this.#serverOptions.healthCheckInterval;
-    if (interval === undefined) return null;
-
-    return {
-      interval,
-      timeout:
-        workerOpts.healthCheckTimeout ??
-        this.#serverOptions.healthCheckTimeout ??
-        5000,
-      maxFailures:
-        workerOpts.healthCheckMaxFailures ??
-        this.#serverOptions.healthCheckMaxFailures ??
-        3,
-    };
-  }
-
-  #resolveIdleTimeout(name: string): number | undefined {
-    // Per-function override takes priority
-    const fnConfig = this.#registry.getFunctionConfig(name);
-    if (fnConfig?.idleTimeout !== undefined) {
-      return fnConfig.idleTimeout;
-    }
-    // Fall back to server-level option
-    return this.#serverOptions.idleTimeout;
-  }
-
-  #startIdleTimer(name: string): void {
-    const timeout = this.#resolveIdleTimeout(name);
-    if (timeout === undefined || timeout <= 0) return;
-
-    this.#clearIdleTimer(name);
-
-    const timer = setTimeout(() => {
-      this.#idleTimers.delete(name);
-      const worker = this.#workers.get(name);
-      if (!worker) return;
-
-      this.#stopHealthCheck(name);
-      this.#healthCheckInFlight.delete(name);
-      worker.terminate();
-      this.#workers.delete(name);
-      this.#serverOptions.onFunctionCold?.(name);
-    }, timeout);
-
-    this.#idleTimers.set(name, timer);
-  }
-
-  #clearIdleTimer(name: string): void {
-    const timer = this.#idleTimers.get(name);
-    if (timer) {
-      clearTimeout(timer);
-      this.#idleTimers.delete(name);
-    }
   }
 }
