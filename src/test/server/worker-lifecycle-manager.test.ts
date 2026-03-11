@@ -479,6 +479,125 @@ describe("WorkerLifecycleManager", { timeout: 10_000 }, () => {
     expect(onFunctionCold).toHaveBeenCalledWith("fn");
   });
 
+  // 20a. generation increments on restart
+  it("generation increments on restart", () => {
+    manager = new WorkerLifecycleManager({
+      functionName: "fn",
+      minWorkers: 0,
+      maxWorkers: 5,
+    });
+
+    expect(manager.generation).toBe(0);
+    manager.restart();
+    expect(manager.generation).toBe(1);
+    manager.restart();
+    expect(manager.generation).toBe(2);
+  });
+
+  // 20b. addInstance rejects stale generation
+  it("addInstance rejects stale generation and terminates worker", () => {
+    manager = new WorkerLifecycleManager({
+      functionName: "fn",
+      minWorkers: 0,
+      maxWorkers: 5,
+    });
+
+    const w = mockWorker();
+    const inst = createWorkerInstance(manager.nextId(), "fn", w);
+
+    // Simulate: generation was 0 when spawn started, but restart bumped it to 1
+    manager.restart();
+    expect(manager.generation).toBe(1);
+
+    const added = manager.addInstance(inst, 0);
+    expect(added).toBe(false);
+    expect(manager.instanceCount).toBe(0);
+    expect(w.terminate).toHaveBeenCalledOnce();
+  });
+
+  // 20c. addInstance accepts matching generation
+  it("addInstance accepts matching generation", () => {
+    manager = new WorkerLifecycleManager({
+      functionName: "fn",
+      minWorkers: 0,
+      maxWorkers: 5,
+    });
+
+    const gen = manager.generation;
+    const w = mockWorker();
+    const inst = createWorkerInstance(manager.nextId(), "fn", w);
+
+    const added = manager.addInstance(inst, gen);
+    expect(added).toBe(true);
+    expect(manager.instanceCount).toBe(1);
+  });
+
+  // 20d. addInstance without expectedGeneration always succeeds (backward compat)
+  it("addInstance without expectedGeneration always succeeds", () => {
+    manager = new WorkerLifecycleManager({
+      functionName: "fn",
+      minWorkers: 0,
+      maxWorkers: 5,
+    });
+
+    manager.restart(); // generation = 1
+
+    const w = mockWorker();
+    const inst = createWorkerInstance(manager.nextId(), "fn", w);
+
+    const added = manager.addInstance(inst);
+    expect(added).toBe(true);
+    expect(manager.instanceCount).toBe(1);
+  });
+
+  // 20e. health check removal fires onFunctionCold when last instance removed
+  it("health check removal fires onFunctionCold when last instance removed", async () => {
+    const onFunctionCold = vi.fn();
+    const onWorkerUnhealthy = vi.fn();
+    manager = new WorkerLifecycleManager({
+      functionName: "fn",
+      minWorkers: 0,
+      maxWorkers: 5,
+      onFunctionCold,
+      onWorkerUnhealthy,
+      healthCheckConfig: {
+        interval: 50,
+        timeout: 25,
+        maxFailures: 1,
+      },
+    });
+
+    const w = mockWorker();
+    // Make health check fail by having request throw
+    (w.request as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("unhealthy");
+    });
+    const inst = createWorkerInstance(manager.nextId(), "fn", w);
+    manager.addInstance(inst);
+
+    expect(manager.instanceCount).toBe(1);
+
+    // Wait for health check to detect failure and remove instance
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(manager.instanceCount).toBe(0);
+    expect(onWorkerUnhealthy).toHaveBeenCalled();
+    expect(onFunctionCold).toHaveBeenCalledOnce();
+    expect(onFunctionCold).toHaveBeenCalledWith("fn");
+  });
+
+  // 20f. minWorkers and maxWorkers getters
+  it("exposes minWorkers and maxWorkers getters", () => {
+    manager = new WorkerLifecycleManager({
+      functionName: "fn",
+      minWorkers: 2,
+      maxWorkers: 5,
+    });
+
+    expect(manager.minWorkers).toBe(2);
+    expect(manager.maxWorkers).toBe(5);
+  });
+
   // 20. dispose cleans up all instances
   it("dispose cleans up all instances", () => {
     manager = new WorkerLifecycleManager({
