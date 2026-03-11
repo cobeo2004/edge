@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import path from "node:path";
-import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
+import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { newDenoHTTPWorker } from "../../worker/index.js";
 import { httpRequest } from "../helpers/http.js";
 import { Buffer } from "node:buffer";

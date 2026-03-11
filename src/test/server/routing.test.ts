@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
+import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { httpRequest } from "../helpers/http.js";
 import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
 

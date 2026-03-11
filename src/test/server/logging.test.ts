@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
+import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import type { LogLevel } from "../../worker/index.js";
 import { httpRequest } from "../helpers/http.js";
 import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
@@ -40,8 +40,8 @@ describe("EdgeFunctionServer – logging", { timeout: 15_000 }, () => {
     expect(
       helloLogs.some(
         (l) =>
-          l.source === "command" && l.message.includes("Spawning deno process")
-      )
+          l.source === "command" && l.message.includes("Spawning deno process"),
+      ),
     ).toBe(true);
   });
 });

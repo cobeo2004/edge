@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
+import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { httpRequest } from "../helpers/http.js";
 import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
 import type { LogLevel } from "../../worker/types.js";
@@ -75,7 +75,7 @@ describe("EdgeFunctionServer – env", { timeout: 15_000 }, () => {
         _name: string,
         _level: LogLevel,
         _source: "stdout" | "stderr" | "command",
-        message: string
+        message: string,
       ) => {
         logs.push(message);
       },
@@ -107,7 +107,7 @@ describe("EdgeFunctionServer – env", { timeout: 15_000 }, () => {
         _name: string,
         _level: LogLevel,
         _source: "stdout" | "stderr" | "command",
-        message: string
+        message: string,
       ) => {
         logs.push(message);
       },

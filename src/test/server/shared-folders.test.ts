@@ -1,7 +1,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
+import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { httpRequest } from "../helpers/http.js";
 import { FUNCTIONS_DIR, IMPORT_MAP } from "../helpers/fixtures.js";
 
@@ -105,7 +105,7 @@ describe("EdgeFunctionServer – shared folders", { timeout: 15_000 }, () => {
         // Always restore file even if test fails
         await fsp.writeFile(sharedFile, original);
       }
-    }
+    },
   );
 
   it(
@@ -142,6 +142,6 @@ describe("EdgeFunctionServer – shared folders", { timeout: 15_000 }, () => {
         // Always restore file even if test fails
         await fsp.writeFile(sharedFile, original);
       }
-    }
+    },
   );
 });

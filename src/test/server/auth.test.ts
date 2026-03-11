@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SignJWT } from "jose";
-import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
+import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { JWTStrategy } from "../../auth/jwt.js";
 import { httpRequest } from "../helpers/http.js";
 import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
@@ -10,7 +10,7 @@ import { Buffer } from "node:buffer";
 const SECRET = "test-secret-that-is-long-enough-for-hs256!!!!!";
 
 function makeToken(
-  claims: Record<string, unknown> = { sub: "user-1" }
+  claims: Record<string, unknown> = { sub: "user-1" },
 ): Promise<string> {
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })

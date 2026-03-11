@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { EdgeFunctionServer } from "../../server/EdgeFunctionServer.js";
+import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { httpRequest } from "../helpers/http.js";
 
 describe(
@@ -27,7 +27,7 @@ describe(
     async function createFunction(
       name: string,
       code: string,
-      functionJson?: object
+      functionJson?: object,
     ) {
       const fnDir = path.join(tmpFunctionsDir, name);
       await fsp.mkdir(fnDir, { recursive: true });
@@ -35,7 +35,7 @@ describe(
       if (functionJson) {
         await fsp.writeFile(
           path.join(fnDir, "function.json"),
-          JSON.stringify(functionJson)
+          JSON.stringify(functionJson),
         );
       }
     }
@@ -43,7 +43,7 @@ describe(
     it("uses default standard profile", async () => {
       await createFunction(
         "net-test",
-        `Deno.serve((_req) => new Response("ok"));`
+        `Deno.serve((_req) => new Response("ok"));`,
       );
       server = new EdgeFunctionServer({
         functionsDir: tmpFunctionsDir,
@@ -57,7 +57,7 @@ describe(
     it("applies per-function permission from functionPermissions", async () => {
       await createFunction(
         "permissive-fn",
-        `Deno.serve((_req) => new Response("ok"));`
+        `Deno.serve((_req) => new Response("ok"));`,
       );
       server = new EdgeFunctionServer({
         functionsDir: tmpFunctionsDir,
@@ -76,7 +76,7 @@ describe(
       await createFunction(
         "custom-fn",
         `Deno.serve((_req) => new Response("ok"));`,
-        { permissions: "permissive" }
+        { permissions: "permissive" },
       );
       server = new EdgeFunctionServer({
         functionsDir: tmpFunctionsDir,
@@ -91,7 +91,7 @@ describe(
     it("supports custom permission profiles", async () => {
       await createFunction(
         "custom-profile",
-        `Deno.serve((_req) => new Response("ok"));`
+        `Deno.serve((_req) => new Response("ok"));`,
       );
       server = new EdgeFunctionServer({
         functionsDir: tmpFunctionsDir,
@@ -111,7 +111,7 @@ describe(
     it("supports raw flags array in functionPermissions", async () => {
       await createFunction(
         "raw-flags",
-        `Deno.serve((_req) => new Response("ok"));`
+        `Deno.serve((_req) => new Response("ok"));`,
       );
       server = new EdgeFunctionServer({
         functionsDir: tmpFunctionsDir,
@@ -124,5 +124,5 @@ describe(
       const res = await httpRequest(server.port, "/raw-flags");
       expect(res.status).toBe(200);
     });
-  }
+  },
 );
