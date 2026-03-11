@@ -101,4 +101,23 @@ describe("EdgeFunctionServer – idle timeout", { timeout: 30_000 }, () => {
     await new Promise((r) => setTimeout(r, 500));
     expect(coldFunctions).toContain("idle-custom");
   });
+
+  it("onFunctionCold callback fires with correct function name", async () => {
+    const coldCalls: string[] = [];
+    server = new EdgeFunctionServer({
+      functionsDir: FUNCTIONS_DIR,
+      port: 0,
+      idleTimeout: 300,
+      onFunctionCold: (name) => coldCalls.push(name),
+    });
+    await server.start();
+
+    await Promise.all([
+      httpRequest(server.port, "/hello"),
+      httpRequest(server.port, "/echo"),
+    ]);
+
+    await new Promise((r) => setTimeout(r, 600));
+    expect(coldCalls.sort()).toEqual(["echo", "hello"]);
+  });
 });
