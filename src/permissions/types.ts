@@ -6,4 +6,6 @@ export interface FunctionConfig {
   permissions?: string | string[];
   /** Whether this function requires auth (default: true when server auth is enabled) */
   auth?: boolean;
+  /** Idle timeout in ms before worker goes cold. Overrides server-level idleTimeout */
+  idleTimeout?: number;
 }
