@@ -46,17 +46,14 @@ describe(
         httpRequest(server!.port, "/slow?delay=2000")
       );
 
-      // Give time for scaling
-      await new Promise((r) => setTimeout(r, 1000));
-
-      const stats = server.getWorkerStats("slow");
-      // Should have spawned multiple workers
-      expect(stats.totalRequests).toBeGreaterThan(0);
-
       const results = await Promise.all(promises);
       for (const res of results) {
         expect(res.status).toBe(200);
       }
+
+      const stats = server.getWorkerStats("slow");
+      // All 3 concurrent requests should have been served
+      expect(stats.totalRequests).toBeGreaterThanOrEqual(3);
     });
 
     it("idle worker scales down when above minWorkers", async () => {

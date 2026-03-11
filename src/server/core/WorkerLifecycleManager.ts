@@ -126,11 +126,23 @@ export class WorkerLifecycleManager {
 
   releaseSpawnSlot(): void {
     this.#spawningCount = Math.max(0, this.#spawningCount - 1);
+
+    // Check for cold transition: 0 instances + 0 spawning = fully cold
+    const shouldFireCold =
+      this.#instances.length === 0 && this.#spawningCount === 0 && this.#readyFired;
+    if (shouldFireCold) {
+      this.#readyFired = false;
+    }
+
     // Notify any waiters that a slot may be available
     for (const resolve of this.#spawnResolvers) {
       resolve();
     }
     this.#spawnResolvers = [];
+
+    if (shouldFireCold) {
+      this.#options.onFunctionCold?.(this.#functionName);
+    }
   }
 
   nextId(): string {
@@ -415,7 +427,15 @@ export class WorkerLifecycleManager {
     // listeners synchronously which could re-enter removeInstance().
     const instances = this.#instances;
     this.#instances = [];
+
+    // Resolve pending waiters so callers don't hang indefinitely
+    const resolvers = this.#spawnResolvers;
     this.#spawnResolvers = [];
+    this.#spawningCount = 0;
+    for (const resolve of resolvers) {
+      resolve();
+    }
+
     for (const instance of instances) {
       this.#clearIdleTimer(instance);
       this.#stopHealthCheck(instance);

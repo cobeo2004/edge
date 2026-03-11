@@ -135,10 +135,8 @@ export class WorkerPool {
   }
 
   async restart(name: string): Promise<void> {
-    const manager = this.#managers.get(name);
-    if (manager) {
-      manager.restart();
-    }
+    const manager = this.#getOrCreateManager(name);
+    manager.restart();
 
     // Clear any in-flight spawn promises for this function
     for (const key of this.#workerPromises.keys()) {
@@ -149,8 +147,8 @@ export class WorkerPool {
 
     if (this.#registry.hasFunction(name)) {
       const count = Math.min(
-        Math.max(manager?.minWorkers ?? 1, 1),
-        manager?.maxWorkers ?? 1
+        Math.max(manager.minWorkers, 1),
+        manager.maxWorkers
       );
       await Promise.all(
         Array.from({ length: count }, () => this.getOrCreate(name))
