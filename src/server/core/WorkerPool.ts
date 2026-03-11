@@ -157,6 +157,11 @@ export class WorkerPool {
   }
 
   decrementActiveRequests(name: string): void {
+    // If the worker has already exited, don't reintroduce stale state
+    if (!this.#workers.has(name)) {
+      this.#activeRequests.delete(name);
+      return;
+    }
     const count = Math.max(0, (this.#activeRequests.get(name) ?? 0) - 1);
     this.#activeRequests.set(name, count);
     if (count === 0) {
@@ -403,7 +408,7 @@ export class WorkerPool {
 
   #startIdleTimer(name: string): void {
     const timeout = this.#resolveIdleTimeout(name);
-    if (timeout === undefined) return;
+    if (timeout === undefined || timeout <= 0) return;
 
     this.#clearIdleTimer(name);
 
