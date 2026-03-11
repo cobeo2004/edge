@@ -79,6 +79,10 @@ export interface EdgeFunctionServerOptions {
   idleTimeout?: number;
   /** Called when a worker is terminated due to idle timeout */
   onFunctionCold?: (name: string) => void;
+  /** Minimum worker instances per function. Default: 0 (can scale to cold) */
+  minWorkers?: number;
+  /** Maximum worker instances per function. Default: 1 (backward-compatible single worker) */
+  maxWorkers?: number;
   /** Auth strategy instance. When set, all requests require authentication unless opted out */
   auth?: AuthStrategy;
   /** Custom response on auth failure. Default: 401 JSON */
