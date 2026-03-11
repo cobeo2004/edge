@@ -18,6 +18,7 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 - [Authentication](#authentication)
 - [Permission Profiles](#permission-profiles)
 - [Execution Limits](#execution-limits)
+- [Idle Timeout (Cold/Warm Lifecycle)](#idle-timeout-coldwarm-lifecycle)
 - [Configuration](#configuration)
 - [Logging](#logging)
 - [Shared Folders](#shared-folders)
@@ -431,7 +432,7 @@ const server = new EdgeFunctionServer({
 
 ### Per-function configuration (`function.json`)
 
-Each function directory can contain a `function.json` that declares its permission profile and auth settings:
+Each function directory can contain a `function.json` that declares its permission profile, auth settings, and idle timeout:
 
 ```
 functions/
@@ -542,6 +543,44 @@ const server = newEdgeFunctionServer({
 
 Health checks are opt-in — they only run when `healthCheckInterval` is set. Options can be set at both the server level and per-worker level (via `workerOptions`), with per-worker values taking precedence.
 
+## Idle Timeout (Cold/Warm Lifecycle)
+
+Workers can automatically transition between **warm** (running) and **cold** (terminated) states based on activity, mimicking Supabase Edge Functions behavior:
+
+- **Cold start:** When a request arrives and no worker is running, one is spawned on demand.
+- **Warm:** The worker stays alive while handling requests.
+- **Idle → Cold:** After a configurable period with no in-flight requests, the worker is terminated to free resources. The next request triggers a new cold start.
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  idleTimeout: 30_000, // terminate workers after 30 seconds of inactivity
+  onFunctionReady: (name) => console.log(`${name} is warm`),
+  onFunctionCold: (name) => console.log(`${name} went cold`),
+});
+```
+
+Idle timeout is **disabled by default** — workers stay alive indefinitely unless configured. This preserves backward compatibility.
+
+### Per-function override
+
+Override the server-level timeout for individual functions via `function.json`:
+
+```json
+{ "idleTimeout": 60000 }
+```
+
+A function with `"idleTimeout": 60000` stays warm for 60 seconds even if the server default is 30 seconds.
+
+### How it works
+
+- The idle timer only starts when all in-flight requests for a function complete (active request count drops to zero).
+- Each new request clears and resets the timer.
+- `idleTimeout` and `workerMaxDuration` are independent — both timers run, whichever fires first terminates the worker.
+- Health check pings do not count as requests and do not reset the idle timer.
+- When `eagerSpawn` is enabled, eagerly spawned workers will go cold if no requests arrive within the idle timeout.
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -591,6 +630,8 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `healthCheckTimeout`       | `number`                                              | Timeout in ms for each health-check ping (default: `5000`)                                      |
 | `healthCheckMaxFailures`   | `number`                                              | Consecutive failures before auto-restart (default: `3`)                                         |
 | `onWorkerUnhealthy`        | `(name: string, consecutiveFailures: number) => void` | Called when a worker is restarted due to failed health checks                                   |
+| `idleTimeout`              | `number`                                              | Idle timeout in ms; worker terminates when idle (disabled by default)                           |
+| `onFunctionCold`           | `(name: string) => void`                              | Called when a worker is terminated due to idle timeout                                           |
 | `auth`                     | `AuthStrategy`                                        | Pluggable auth strategy (opt-in, disabled by default)                                           |
 | `onAuthFailure`            | `(request, error) => Response`                        | Custom response on auth failure (default: 401 JSON)                                             |
 | `publicFunctions`          | `string[]`                                            | Functions that skip auth entirely                                                               |
