@@ -1,9 +1,9 @@
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { loadFunctionConfig } from "../permissions/config.js";
-import { BUILT_IN_PROFILES } from "../permissions/profiles.js";
-import type { FunctionConfig } from "../permissions/types.js";
+import { loadFunctionConfig } from "../../permissions/config.js";
+import { BUILT_IN_PROFILES } from "../../permissions/profiles.js";
+import type { FunctionConfig } from "../../permissions/types.js";
 
 export const ENTRYPOINT_NAMES = [
   "index.ts",

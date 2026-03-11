@@ -2,10 +2,10 @@ import type {
   DenoWorkerOptions,
   LogLevel,
   RequestStats,
-} from "../worker/index.js";
-import type { AuthResult, AuthStrategy } from "../auth/types.js";
-import type { ServerAdapter } from "./adapters/types.js";
-import type { RuntimeName } from "./adapters/detect.js";
+} from "../../worker/index.js";
+import type { AuthResult, AuthStrategy } from "../../auth/types.js";
+import type { ServerAdapter } from "../adapters/types.js";
+import type { RuntimeName } from "../adapters/detect.js";
 
 export interface RequestContext {
   request: Request;

@@ -1,6 +1,6 @@
-import type { AuthResult, AuthStrategy } from "../auth/types.js";
+import type { AuthResult, AuthStrategy } from "../../auth/types.js";
 import type { FunctionRegistry } from "./FunctionRegistry.js";
-import type { Middleware, RequestContext } from "./types.js";
+import type { Middleware, RequestContext } from "../utils/types.js";
 
 export interface AuthMiddlewareOptions {
   auth: AuthStrategy;

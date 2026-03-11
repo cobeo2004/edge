@@ -1,12 +1,12 @@
 export {
   EdgeFunctionServer,
   newEdgeFunctionServer,
-} from "./EdgeFunctionServer.js";
+} from "./core/EdgeFunctionServer.js";
 export type {
   EdgeFunctionServerOptions,
   RequestContext,
   Middleware,
-} from "./types.js";
+} from "./utils/types.js";
 
 export type {
   ServerAdapter,

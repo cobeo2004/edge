@@ -1,7 +1,7 @@
 import path from "node:path";
-import { filterSecretValues, loadEnvFile } from "../env/index.js";
-import type { AdapterServer } from "./adapters/types.js";
-import { resolveAdapter } from "./adapters/detect.js";
+import { filterSecretValues, loadEnvFile } from "../../env/index.js";
+import type { AdapterServer } from "../adapters/types.js";
+import { resolveAdapter } from "../adapters/detect.js";
 import { FunctionRegistry } from "./FunctionRegistry.js";
 import { WorkerPool } from "./WorkerPool.js";
 import { AuthMiddleware } from "./AuthMiddleware.js";
@@ -11,7 +11,7 @@ import type {
   EdgeFunctionServerOptions,
   Middleware,
   RequestContext,
-} from "./types.js";
+} from "../utils/types.js";
 
 export class EdgeFunctionServer {
   #options: EdgeFunctionServerOptions;

@@ -1,6 +1,6 @@
-import type { DenoHTTPWorker, RequestStats } from "../worker/index.js";
+import type { DenoHTTPWorker, RequestStats } from "../../worker/index.js";
 import type { WorkerPool } from "./WorkerPool.js";
-import type { Middleware, RequestContext } from "./types.js";
+import type { Middleware, RequestContext } from "../utils/types.js";
 
 export interface WorkerRequestHandlerOptions {
   onFunctionError?: (name: string, error: Error) => void;

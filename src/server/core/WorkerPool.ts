@@ -1,14 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type DenoHTTPWorker, newDenoHTTPWorker } from "../worker/index.js";
+import { type DenoHTTPWorker, newDenoHTTPWorker } from "../../worker/index.js";
 import {
   createSecretMasker,
   filterSecretValues,
   loadEnvFile,
-} from "../env/index.js";
-import { resolvePermissionFlags } from "../permissions/profiles.js";
+} from "../../env/index.js";
+import { resolvePermissionFlags } from "../../permissions/profiles.js";
 import type { FunctionRegistry } from "./FunctionRegistry.js";
-import type { EdgeFunctionServerOptions } from "./types.js";
+import type { EdgeFunctionServerOptions } from "../utils/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
