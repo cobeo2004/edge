@@ -31,6 +31,33 @@ export async function loadFunctionConfig(
       config.idleTimeout = parsed.idleTimeout;
     }
 
+    if (typeof parsed.minWorkers === "number" && parsed.minWorkers >= 0) {
+      config.minWorkers = parsed.minWorkers;
+    }
+
+    if (typeof parsed.maxWorkers === "number" && parsed.maxWorkers >= 1) {
+      config.maxWorkers = parsed.maxWorkers;
+    }
+
+    // Cross-validate: minWorkers <= maxWorkers
+    if (
+      config.minWorkers !== undefined &&
+      config.maxWorkers !== undefined &&
+      config.minWorkers > config.maxWorkers
+    ) {
+      onError?.(
+        new Error(
+          `function.json: minWorkers (${config.minWorkers}) > maxWorkers (${config.maxWorkers}), ignoring both`
+        )
+      );
+      delete config.minWorkers;
+      delete config.maxWorkers;
+    }
+
+    if (typeof parsed.eagerSpawn === "boolean") {
+      config.eagerSpawn = parsed.eagerSpawn;
+    }
+
     return config;
   } catch (err) {
     // Only call onError for parse errors, not missing files
