@@ -418,6 +418,7 @@ export class WorkerPool {
       if (!worker) return;
 
       this.#stopHealthCheck(name);
+      this.#healthCheckInFlight.delete(name);
       worker.terminate();
       this.#workers.delete(name);
       this.#serverOptions.onFunctionCold?.(name);
