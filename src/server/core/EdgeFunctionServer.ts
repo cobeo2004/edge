@@ -108,13 +108,7 @@ export class EdgeFunctionServer {
       );
     }
 
-    if (this.#options.eagerSpawn) {
-      await Promise.all(
-        this.#registry
-          .listFunctions()
-          .map((name) => this.#pool!.getOrCreate(name))
-      );
-    }
+    await this.#pool.eagerSpawn(this.#registry.listFunctions());
   }
 
   async stop(): Promise<void> {
@@ -154,7 +148,16 @@ export class EdgeFunctionServer {
     restartCount: number;
   } {
     if (!this.#pool) throw new Error("Server is not started");
-    return this.#pool.getStats(name);
+    const stats = this.#pool.getStats(name);
+    // Backward-compatible: return flat stats
+    return {
+      totalRequests: stats.totalRequests,
+      uptimeMs:
+        stats.instances.length > 0
+          ? Math.max(...stats.instances.map((i) => i.uptimeMs))
+          : 0,
+      restartCount: stats.restartCount,
+    };
   }
 
   async #handleRequest(request: Request): Promise<Response> {
