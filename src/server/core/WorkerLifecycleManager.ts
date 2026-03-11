@@ -140,12 +140,21 @@ export class WorkerLifecycleManager {
     const instance = this.#instances[idx]!;
     this.#clearIdleTimer(instance);
     this.#stopHealthCheck(instance);
-    instance.worker.terminate();
+
+    // Splice BEFORE terminate — terminate() fires exit listeners
+    // synchronously, which could re-enter removeInstance().
     this.#instances.splice(idx, 1);
 
-    // Fire onFunctionCold when last instance removed
-    if (this.#instances.length === 0 && this.#spawningCount === 0) {
+    const shouldFireCold =
+      this.#instances.length === 0 && this.#spawningCount === 0;
+    if (shouldFireCold) {
       this.#readyFired = false;
+    }
+
+    instance.worker.terminate();
+
+    // Fire onFunctionCold when last instance removed
+    if (shouldFireCold) {
       this.#options.onFunctionCold?.(this.#functionName);
     }
   }
@@ -190,12 +199,22 @@ export class WorkerLifecycleManager {
       this.#stopHealthCheck(instance);
       const idx = this.#instances.findIndex((i) => i.id === instance.id);
       if (idx === -1) return;
-      instance.worker.terminate();
+
+      // Splice BEFORE terminate — terminate() fires exit listeners
+      // synchronously, which would call removeInstance() and double-fire
+      // the cold callback if the instance is still in the array.
       this.#instances.splice(idx, 1);
 
-      // Fire cold callback if last instance
-      if (this.#instances.length === 0 && this.#spawningCount === 0) {
+      const shouldFireCold =
+        this.#instances.length === 0 && this.#spawningCount === 0;
+      if (shouldFireCold) {
         this.#readyFired = false;
+      }
+
+      instance.worker.terminate();
+
+      // Fire cold callback if last instance
+      if (shouldFireCold) {
         this.#options.onFunctionCold?.(this.#functionName);
       }
     }, this.#idleTimeout);
@@ -284,11 +303,13 @@ export class WorkerLifecycleManager {
           instance.healthCheckFailures
         );
 
-        // Remove this instance
+        // Remove this instance — splice before terminate to avoid
+        // re-entrant removeInstance() from synchronous exit listeners.
         const idx = this.#instances.findIndex((i) => i.id === instance.id);
         if (idx !== -1) {
-          instance.worker.terminate();
           this.#instances.splice(idx, 1);
+          this.#restartCount++;
+          instance.worker.terminate();
         }
 
         // If below minWorkers, signal need for replacement spawn
@@ -344,13 +365,16 @@ export class WorkerLifecycleManager {
   // --- Dispose ---
 
   dispose(): void {
-    for (const instance of this.#instances) {
+    // Copy and clear before terminating — terminate() fires exit
+    // listeners synchronously which could re-enter removeInstance().
+    const instances = this.#instances;
+    this.#instances = [];
+    this.#spawnResolvers = [];
+    for (const instance of instances) {
       this.#clearIdleTimer(instance);
       this.#stopHealthCheck(instance);
       instance.worker.terminate();
     }
-    this.#instances = [];
-    this.#spawnResolvers = [];
   }
 
   // --- Restart (hot-reload) ---
