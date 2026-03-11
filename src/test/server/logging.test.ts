@@ -40,8 +40,8 @@ describe("EdgeFunctionServer – logging", { timeout: 15_000 }, () => {
     expect(
       helloLogs.some(
         (l) =>
-          l.source === "command" && l.message.includes("Spawning deno process"),
-      ),
+          l.source === "command" && l.message.includes("Spawning deno process")
+      )
     ).toBe(true);
   });
 });

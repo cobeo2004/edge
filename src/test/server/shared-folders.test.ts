@@ -105,7 +105,7 @@ describe("EdgeFunctionServer – shared folders", { timeout: 15_000 }, () => {
         // Always restore file even if test fails
         await fsp.writeFile(sharedFile, original);
       }
-    },
+    }
   );
 
   it(
@@ -142,6 +142,6 @@ describe("EdgeFunctionServer – shared folders", { timeout: 15_000 }, () => {
         // Always restore file even if test fails
         await fsp.writeFile(sharedFile, original);
       }
-    },
+    }
   );
 });

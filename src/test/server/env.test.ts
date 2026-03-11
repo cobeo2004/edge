@@ -75,7 +75,7 @@ describe("EdgeFunctionServer – env", { timeout: 15_000 }, () => {
         _name: string,
         _level: LogLevel,
         _source: "stdout" | "stderr" | "command",
-        message: string,
+        message: string
       ) => {
         logs.push(message);
       },
@@ -107,7 +107,7 @@ describe("EdgeFunctionServer – env", { timeout: 15_000 }, () => {
         _name: string,
         _level: LogLevel,
         _source: "stdout" | "stderr" | "command",
-        message: string,
+        message: string
       ) => {
         logs.push(message);
       },

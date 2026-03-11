@@ -10,7 +10,7 @@ import { Buffer } from "node:buffer";
 const SECRET = "test-secret-that-is-long-enough-for-hs256!!!!!";
 
 function makeToken(
-  claims: Record<string, unknown> = { sub: "user-1" },
+  claims: Record<string, unknown> = { sub: "user-1" }
 ): Promise<string> {
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })

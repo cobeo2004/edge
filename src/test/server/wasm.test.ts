@@ -50,7 +50,7 @@ describe("EdgeFunctionServer – wasm-test function", { timeout: 30_000 }, () =>
     await server.start();
     const res = await httpRequest(
       server.port,
-      "/wasm-test?image=https://example.com/img.png",
+      "/wasm-test?image=https://example.com/img.png"
     );
     expect(res.status).toBe(400);
     expect(res.body).toContain("width");
@@ -67,7 +67,7 @@ describe("EdgeFunctionServer – wasm-test function", { timeout: 30_000 }, () =>
     await server.start();
     const res = await httpRequest(
       server.port,
-      "/wasm-test?image=not-a-url&width=100",
+      "/wasm-test?image=not-a-url&width=100"
     );
     expect(res.status).toBe(400);
     expect(res.body).toContain("'image' must be a valid URL");
@@ -86,7 +86,7 @@ describe("EdgeFunctionServer – wasm-test function", { timeout: 30_000 }, () =>
     const imageUrl = encodeURIComponent("https://picsum.photos/200/200.jpg");
     const res = await httpRequestRaw(
       server.port,
-      `/wasm-test?image=${imageUrl}&width=50`,
+      `/wasm-test?image=${imageUrl}&width=50`
     );
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/^image\//);
