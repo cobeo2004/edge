@@ -137,4 +137,29 @@ describe("EdgeFunctionServer – idle timeout", { timeout: 30_000 }, () => {
     const res = await httpRequest(server.port, "/hello");
     expect(res.status).toBe(200);
   });
+
+  it("idle timeout and workerMaxDuration are independent", async () => {
+    const coldFunctions: string[] = [];
+    const readyFunctions: string[] = [];
+    server = new EdgeFunctionServer({
+      functionsDir: FUNCTIONS_DIR,
+      port: 0,
+      idleTimeout: 300,
+      workerMaxDuration: 10000,
+      onFunctionCold: (name) => coldFunctions.push(name),
+      onFunctionReady: (name) => readyFunctions.push(name),
+    });
+    await server.start();
+
+    const res = await httpRequest(server.port, "/hello");
+    expect(res.status).toBe(200);
+
+    await new Promise((r) => setTimeout(r, 600));
+    expect(coldFunctions).toContain("hello");
+
+    readyFunctions.length = 0;
+    const res2 = await httpRequest(server.port, "/hello");
+    expect(res2.status).toBe(200);
+    expect(readyFunctions).toContain("hello");
+  });
 });
