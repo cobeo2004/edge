@@ -27,6 +27,10 @@ export async function loadFunctionConfig(
       config.auth = parsed.auth;
     }
 
+    if (typeof parsed.idleTimeout === "number" && parsed.idleTimeout > 0) {
+      config.idleTimeout = parsed.idleTimeout;
+    }
+
     return config;
   } catch (err) {
     // Only call onError for parse errors, not missing files

@@ -53,106 +53,129 @@ export class WorkerRequestHandler {
       // Track request
       const startTime = Date.now();
       this.#pool.incrementRequestCount(functionName);
+      this.#pool.incrementActiveRequests(functionName);
 
-      return new Promise<Response>((resolve, reject) => {
-        const proxyReq = worker.request(
-          rewrittenUrl,
-          { method: request.method, headers },
-          (proxyRes) => {
-            const statusCode = proxyRes.statusCode ?? 200;
-            const responseHeaders = new Headers();
-            for (const [key, value] of Object.entries(proxyRes.headers)) {
-              if (value === undefined) continue;
+      const pool = this.#pool;
+      let decremented = false;
+      const releaseActiveRequest = () => {
+        if (decremented) return;
+        decremented = true;
+        pool.decrementActiveRequests(functionName);
+      };
 
-              const headerName = key.toLowerCase();
-              if (Array.isArray(value)) {
-                if (headerName === "set-cookie") {
-                  for (const v of value) {
-                    responseHeaders.append(key, v);
+      try {
+        return await new Promise<Response>((resolve, reject) => {
+          const proxyReq = worker.request(
+            rewrittenUrl,
+            { method: request.method, headers },
+            (proxyRes) => {
+              const statusCode = proxyRes.statusCode ?? 200;
+              const responseHeaders = new Headers();
+              for (const [key, value] of Object.entries(proxyRes.headers)) {
+                if (value === undefined) continue;
+
+                const headerName = key.toLowerCase();
+                if (Array.isArray(value)) {
+                  if (headerName === "set-cookie") {
+                    for (const v of value) {
+                      responseHeaders.append(key, v);
+                    }
+                  } else {
+                    responseHeaders.set(key, value.join(", "));
                   }
                 } else {
-                  responseHeaders.set(key, value.join(", "));
-                }
-              } else {
-                if (headerName === "set-cookie") {
-                  responseHeaders.append(key, value);
-                } else {
-                  responseHeaders.set(key, value);
+                  if (headerName === "set-cookie") {
+                    responseHeaders.append(key, value);
+                  } else {
+                    responseHeaders.set(key, value);
+                  }
                 }
               }
+
+              let statsEmitted = false;
+              const emitStats = (status: number, timedOut: boolean) => {
+                if (statsEmitted) return;
+                statsEmitted = true;
+                this.#emitStats(functionName, startTime, status, timedOut);
+              };
+
+              // Handle client disconnect / stream abort
+              proxyRes.on("close", () => {
+                emitStats(statusCode, false);
+                releaseActiveRequest();
+              });
+
+              const body = new ReadableStream({
+                start(controller) {
+                  proxyRes.on("data", (chunk: Buffer) =>
+                    controller.enqueue(chunk)
+                  );
+                  proxyRes.on("end", () => {
+                    controller.close();
+                    emitStats(statusCode, false);
+                    releaseActiveRequest();
+                  });
+                  proxyRes.on("error", (err) => {
+                    emitStats(statusCode, false);
+                    releaseActiveRequest();
+                    controller.error(err);
+                  });
+                },
+              });
+
+              resolve(
+                new Response(body, {
+                  status: statusCode,
+                  headers: responseHeaders,
+                })
+              );
             }
+          );
 
-            let statsEmitted = false;
-            const emitStats = (status: number, timedOut: boolean) => {
-              if (statsEmitted) return;
-              statsEmitted = true;
-              this.#emitStats(functionName, startTime, status, timedOut);
-            };
-
-            const body = new ReadableStream({
-              start(controller) {
-                proxyRes.on("data", (chunk: Buffer) =>
-                  controller.enqueue(chunk)
-                );
-                proxyRes.on("end", () => {
-                  controller.close();
-                  emitStats(statusCode, false);
-                });
-                proxyRes.on("error", (err) => {
-                  emitStats(statusCode, false);
-                  controller.error(err);
-                });
-              },
-            });
-
+          proxyReq.on("error", (err) => {
+            this.#options.onFunctionError?.(functionName, err);
+            const timedOut = (err as any).code === "ERR_REQUEST_TIMEOUT";
+            const status = timedOut ? 504 : 502;
+            const errorMsg = timedOut
+              ? "Request timed out"
+              : "Worker request failed";
+            this.#emitStats(functionName, startTime, status, timedOut);
+            releaseActiveRequest();
             resolve(
-              new Response(body, {
-                status: statusCode,
-                headers: responseHeaders,
+              new Response(JSON.stringify({ error: errorMsg }), {
+                status,
+                headers: { "Content-Type": "application/json" },
               })
             );
+          });
+
+          if (request.body) {
+            const reader = request.body.getReader();
+            const pump = (): void => {
+              reader
+                .read()
+                .then(({ done, value }) => {
+                  if (done) {
+                    proxyReq.end();
+                    return;
+                  }
+                  proxyReq.write(value);
+                  pump();
+                })
+                .catch((err) => {
+                  proxyReq.destroy(err);
+                  reject(err);
+                });
+            };
+            pump();
+          } else {
+            proxyReq.end();
           }
-        );
-
-        proxyReq.on("error", (err) => {
-          this.#options.onFunctionError?.(functionName, err);
-          const timedOut = (err as any).code === "ERR_REQUEST_TIMEOUT";
-          const status = timedOut ? 504 : 502;
-          const errorMsg = timedOut
-            ? "Request timed out"
-            : "Worker request failed";
-          this.#emitStats(functionName, startTime, status, timedOut);
-          resolve(
-            new Response(JSON.stringify({ error: errorMsg }), {
-              status,
-              headers: { "Content-Type": "application/json" },
-            })
-          );
         });
-
-        if (request.body) {
-          const reader = request.body.getReader();
-          const pump = (): void => {
-            reader
-              .read()
-              .then(({ done, value }) => {
-                if (done) {
-                  proxyReq.end();
-                  return;
-                }
-                proxyReq.write(value);
-                pump();
-              })
-              .catch((err) => {
-                proxyReq.destroy(err);
-                reject(err);
-              });
-          };
-          pump();
-        } else {
-          proxyReq.end();
-        }
-      });
+      } catch (err) {
+        releaseActiveRequest();
+        throw err;
+      }
     };
   }
 
