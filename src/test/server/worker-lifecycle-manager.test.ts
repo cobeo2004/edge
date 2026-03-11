@@ -8,8 +8,8 @@ function mockWorker(): DenoHTTPWorker {
     terminate: vi.fn(),
     shutdown: vi.fn(),
     request: vi.fn(),
-    stdout: null as any,
-    stderr: null as any,
+    stdout: null,
+    stderr: null,
     addEventListener: vi.fn(),
   } as unknown as DenoHTTPWorker;
 }
@@ -373,8 +373,8 @@ describe("WorkerLifecycleManager", { timeout: 10_000 }, () => {
     expect(stats.restartCount).toBe(0);
     expect(stats.instances).toHaveLength(2);
 
-    const s1 = stats.instances.find((s) => s.id === id1);
-    const s2 = stats.instances.find((s) => s.id === id2);
+    const s1 = stats.instances.find((s: { id: string }) => s.id === id1);
+    const s2 = stats.instances.find((s: { id: string }) => s.id === id2);
 
     expect(s1).toBeDefined();
     expect(s1?.activeRequests).toBe(2);
