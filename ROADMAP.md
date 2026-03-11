@@ -112,21 +112,22 @@ Workers now transition between cold (no process) and warm (running) states based
 - Independent of `workerMaxDuration` (both timers run, whichever fires first wins)
 - Works with `eagerSpawn` — eagerly spawned workers go cold if no requests arrive within the timeout
 
-**Future (Approach 2 — extract WorkerLifecycleManager):**
-When Worker Pool / Concurrency lands, extract idle timeout + health checks + max duration + auto-scaling into a dedicated `WorkerLifecycleManager` class to keep `WorkerPool` focused on spawning and routing.
+Lifecycle management is now handled by `WorkerLifecycleManager` (extracted as part of Worker Pool / Concurrency), which manages idle timeout, health checks, scaling, and cold/warm transitions per function.
 
 ### Worker Pool / Concurrency
 
-**Status:** Not started
+**Status:** Done
 
-Supabase can run multiple isolates per function to handle concurrent requests. This project spawns exactly one Deno process per function — concurrent requests queue behind a single worker.
-
-**Planned:**
-- Configurable worker pool size per function
-- Round-robin or least-connections request routing
-- Auto-scaling based on queue depth or response latency
-- Idle worker recycling
-- Extract `WorkerLifecycleManager` from `WorkerPool` to manage all lifecycle concerns (idle timeout, health checks, max duration, scaling) in one place
+Multiple worker instances per function with automatic scaling and load balancing:
+- `minWorkers` / `maxWorkers` options on `EdgeFunctionServerOptions` and per-function `function.json`
+- Least-loaded request routing — new requests go to the instance with fewest active requests
+- Auto-scale up when all instances are busy (up to `maxWorkers`)
+- Auto-scale down via idle timeout when above `minWorkers`
+- `WorkerLifecycleManager` class manages all lifecycle concerns (spawning, idle timeout, health checks, cold/warm transitions) per function
+- `onFunctionCold` fires when last instance is removed (including failed spawn slots)
+- `onFunctionReady` fires when first instance is added
+- Generation-based restart invalidation prevents stale spawns from registering after a restart
+- Backward compatible: default `maxWorkers: 1` preserves single-worker behavior
 
 ### WebSocket Support
 
