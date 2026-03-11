@@ -19,7 +19,6 @@ export interface WorkerLifecycleManagerOptions {
   onFunctionCold?: (name: string) => void;
   onFunctionReady?: (name: string) => void;
   onWorkerUnhealthy?: (name: string, failures: number) => void;
-  onFunctionError?: (name: string, error: Error) => void;
   onNeedSpawn?: (name: string) => void;
 }
 
@@ -41,6 +40,7 @@ export class WorkerLifecycleManager {
   #spawnResolvers: Array<() => void> = [];
   #restartCount = 0;
   #readyFired = false;
+  #generation = 0;
 
   constructor(options: WorkerLifecycleManagerOptions) {
     this.#functionName = options.functionName;
@@ -57,6 +57,18 @@ export class WorkerLifecycleManager {
 
   get instanceCount(): number {
     return this.#instances.length;
+  }
+
+  get generation(): number {
+    return this.#generation;
+  }
+
+  get minWorkers(): number {
+    return this.#minWorkers;
+  }
+
+  get maxWorkers(): number {
+    return this.#maxWorkers;
   }
 
   /**
@@ -125,7 +137,15 @@ export class WorkerLifecycleManager {
     return `${this.#functionName}-${this.#idCounter++}`;
   }
 
-  addInstance(instance: WorkerInstance): void {
+  addInstance(instance: WorkerInstance, expectedGeneration?: number): boolean {
+    if (
+      expectedGeneration !== undefined &&
+      expectedGeneration !== this.#generation
+    ) {
+      instance.worker.terminate();
+      return false;
+    }
+
     this.#instances.push(instance);
 
     if (!this.#readyFired) {
@@ -140,6 +160,8 @@ export class WorkerLifecycleManager {
     if (instance.activeRequests === 0) {
       this.#startIdleTimer(instance);
     }
+
+    return true;
   }
 
   removeInstance(id: string): void {
@@ -321,7 +343,18 @@ export class WorkerLifecycleManager {
         if (idx !== -1) {
           this.#instances.splice(idx, 1);
           this.#restartCount++;
+
+          const shouldFireCold =
+            this.#instances.length === 0 && this.#spawningCount === 0;
+          if (shouldFireCold) {
+            this.#readyFired = false;
+          }
+
           instance.worker.terminate();
+
+          if (shouldFireCold) {
+            this.#options.onFunctionCold?.(this.#functionName);
+          }
         }
 
         // If below minWorkers, signal need for replacement spawn
@@ -377,6 +410,7 @@ export class WorkerLifecycleManager {
   // --- Dispose ---
 
   dispose(): void {
+    this.#generation++;
     // Copy and clear before terminating — terminate() fires exit
     // listeners synchronously which could re-enter removeInstance().
     const instances = this.#instances;
@@ -393,6 +427,7 @@ export class WorkerLifecycleManager {
 
   restart(): void {
     this.#restartCount++;
+    // generation is incremented inside dispose()
     this.dispose();
     this.#readyFired = false;
   }

@@ -39,6 +39,7 @@ export class WorkerPool {
 
   #managers = new Map<string, WorkerLifecycleManager>();
   #workerPromises = new Map<string, Promise<WorkerInstance>>();
+  #disposed = false;
 
   constructor(options: WorkerPoolOptions) {
     this.#registry = options.registry;
@@ -48,6 +49,9 @@ export class WorkerPool {
   }
 
   async getOrCreate(name: string): Promise<WorkerInstance> {
+    if (this.#disposed) {
+      throw new Error("WorkerPool has been terminated");
+    }
     const manager = this.#getOrCreateManager(name);
 
     const MAX_RETRIES = 3;
@@ -106,7 +110,14 @@ export class WorkerPool {
       throw new Error(`Function "${name}" not found`);
     }
 
+    const expectedGeneration = manager.generation;
     const worker = await this.#spawnWorker(name, id, entrypoint);
+
+    if (this.#disposed) {
+      worker.terminate();
+      throw new Error("WorkerPool has been terminated");
+    }
+
     const instance = createWorkerInstance(id, name, worker);
 
     // Auto-remove on exit so instance is cleaned up
@@ -114,7 +125,12 @@ export class WorkerPool {
       manager.removeInstance(id);
     });
 
-    manager.addInstance(instance);
+    const added = manager.addInstance(instance, expectedGeneration);
+    if (!added) {
+      throw new Error(
+        `Stale spawn for "${name}": generation changed during spawn`
+      );
+    }
     return instance;
   }
 
@@ -132,8 +148,10 @@ export class WorkerPool {
     }
 
     if (this.#registry.hasFunction(name)) {
-      const minWorkers = this.#resolveMinWorkers(name);
-      const count = Math.max(minWorkers, 1);
+      const count = Math.min(
+        Math.max(manager?.minWorkers ?? 1, 1),
+        manager?.maxWorkers ?? 1
+      );
       await Promise.all(
         Array.from({ length: count }, () => this.getOrCreate(name))
       );
@@ -173,6 +191,7 @@ export class WorkerPool {
   }
 
   terminateAll(): void {
+    this.#disposed = true;
     for (const manager of this.#managers.values()) {
       manager.dispose();
     }
@@ -215,8 +234,8 @@ export class WorkerPool {
       const shouldEagerSpawn = fnEager !== undefined ? fnEager : serverEager;
       if (!shouldEagerSpawn) continue;
 
-      const minWorkers = this.#resolveMinWorkers(name);
-      const count = Math.max(minWorkers, 1);
+      const mgr = this.#getOrCreateManager(name);
+      const count = Math.min(Math.max(mgr.minWorkers, 1), mgr.maxWorkers);
       for (let i = 0; i < count; i++) {
         promises.push(this.getOrCreate(name));
       }
@@ -270,7 +289,6 @@ export class WorkerPool {
       onFunctionCold: this.#serverOptions.onFunctionCold,
       onFunctionReady: this.#serverOptions.onFunctionReady,
       onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
-      onFunctionError: this.#serverOptions.onFunctionError,
       onNeedSpawn: (fnName) => {
         // Health check detected we're below minWorkers — spawn replacement
         this.getOrCreate(fnName).catch((err) => {
@@ -281,11 +299,6 @@ export class WorkerPool {
 
     this.#managers.set(name, manager);
     return manager;
-  }
-
-  #resolveMinWorkers(name: string): number {
-    const fnConfig = this.#registry.getFunctionConfig(name);
-    return fnConfig?.minWorkers ?? this.#serverOptions.minWorkers ?? 0;
   }
 
   #resolveHealthCheckConfig(): {
