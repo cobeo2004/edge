@@ -61,11 +61,17 @@ export class WorkerLifecycleManager {
 
   /**
    * Get the least-loaded instance, or signal that a new spawn is needed.
+   *
+   * When returning `{ kind: "spawn" }`, the spawn slot is atomically reserved
+   * (i.e., `#spawningCount` is incremented). The caller MUST call
+   * `releaseSpawnSlot()` when the spawn completes (success or failure).
+   * The caller does NOT need to call `reserveSpawnSlot()` separately.
    */
   acquire(): AcquireResult {
     // If no instances exist and room to spawn
     if (this.#instances.length === 0) {
       if (this.#instances.length + this.#spawningCount < this.#maxWorkers) {
+        this.#spawningCount++; // Atomic reserve — prevents concurrent overshoot
         return { kind: "spawn" };
       }
       // Spawn in-flight, wait for it
@@ -87,6 +93,7 @@ export class WorkerLifecycleManager {
 
     // All instances are busy — can we scale up?
     if (this.#instances.length + this.#spawningCount < this.#maxWorkers) {
+      this.#spawningCount++; // Atomic reserve — prevents concurrent overshoot
       return { kind: "spawn" };
     }
 
@@ -99,8 +106,10 @@ export class WorkerLifecycleManager {
     return { kind: "instance", instance: leastLoaded };
   }
 
+  /** @deprecated Spawn slot is now reserved atomically inside acquire(). */
   reserveSpawnSlot(): void {
-    this.#spawningCount++;
+    // No-op: acquire() now increments #spawningCount atomically.
+    // Kept for backward compat but callers should not use this.
   }
 
   releaseSpawnSlot(): void {
@@ -153,7 +162,9 @@ export class WorkerLifecycleManager {
 
     instance.worker.terminate();
 
-    // Fire onFunctionCold when last instance removed
+    // Fire onFunctionCold when last instance removed, regardless of reason
+    // (idle timeout, crash, health check failure, explicit termination).
+    // This means "function has zero workers" — not just "idle scale-down".
     if (shouldFireCold) {
       this.#options.onFunctionCold?.(this.#functionName);
     }
@@ -303,8 +314,9 @@ export class WorkerLifecycleManager {
           instance.healthCheckFailures
         );
 
-        // Remove this instance — splice before terminate to avoid
-        // re-entrant removeInstance() from synchronous exit listeners.
+        // Remove this instance — clear timers, splice before terminate
+        // to avoid re-entrant removeInstance() from synchronous exit listeners.
+        this.#clearIdleTimer(instance);
         const idx = this.#instances.findIndex((i) => i.id === instance.id);
         if (idx !== -1) {
           this.#instances.splice(idx, 1);

@@ -59,7 +59,7 @@ export class WorkerPool {
           return result.instance;
 
         case "spawn": {
-          manager.reserveSpawnSlot();
+          // Spawn slot already reserved atomically inside acquire()
           const id = manager.nextId();
           const dedupKey = `${name}-${id}`;
 

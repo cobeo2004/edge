@@ -157,9 +157,11 @@ describe("WorkerLifecycleManager", { timeout: 10_000 }, () => {
       maxWorkers: 1,
     });
 
-    // Reserve a spawn slot so spawningCount = 1 = maxWorkers
-    manager.reserveSpawnSlot();
+    // First acquire atomically reserves a spawn slot (spawningCount = 1 = maxWorkers)
+    const first = manager.acquire();
+    expect(first.kind).toBe("spawn");
 
+    // Second acquire should see at capacity with in-flight spawn => wait
     const result = manager.acquire();
     expect(result.kind).toBe("wait");
     if (result.kind === "wait") {
@@ -175,11 +177,13 @@ describe("WorkerLifecycleManager", { timeout: 10_000 }, () => {
       maxWorkers: 2,
     });
 
-    // Reserve both slots
-    manager.reserveSpawnSlot();
-    manager.reserveSpawnSlot();
+    // Two acquires atomically reserve both slots
+    const first = manager.acquire();
+    expect(first.kind).toBe("spawn");
+    const second = manager.acquire();
+    expect(second.kind).toBe("spawn");
 
-    // No instances yet but spawningCount == maxWorkers => wait
+    // Third acquire: spawningCount == maxWorkers => wait
     const result = manager.acquire();
     expect(result.kind).toBe("wait");
   });
@@ -192,8 +196,11 @@ describe("WorkerLifecycleManager", { timeout: 10_000 }, () => {
       maxWorkers: 1,
     });
 
-    manager.reserveSpawnSlot();
+    // Atomically reserve via acquire
+    const first = manager.acquire();
+    expect(first.kind).toBe("spawn");
 
+    // Second acquire gets wait
     const result = manager.acquire();
     expect(result.kind).toBe("wait");
 

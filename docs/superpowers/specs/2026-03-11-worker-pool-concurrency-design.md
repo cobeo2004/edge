@@ -94,9 +94,9 @@ class WorkerLifecycleManager {
 
 **Concurrent scale-up coordination:**
 - `WorkerLifecycleManager` tracks a `#spawningCount` counter: how many spawns are currently in-flight for this function.
-- `acquire()` checks `instances.length + #spawningCount >= maxWorkers` before returning `null`. This prevents multiple concurrent requests from each triggering a spawn that overshoots `maxWorkers`.
-- `WorkerPool.getOrCreate()` increments `#spawningCount` before spawning, decrements after spawn completes (success or failure).
-- Promise dedup in `WorkerPool` is keyed by `"{name}-{nextId}"` where `nextId` comes from the manager's counter. Two concurrent callers that both see `acquire()` return `{ kind: "spawn" }` will get different IDs and thus different dedup keys — but the `#spawningCount` gate ensures only the first triggers a real spawn while the second receives `{ kind: "wait" }` and awaits the in-flight spawn.
+- `acquire()` atomically increments `#spawningCount` when returning `{ kind: "spawn" }`. This ensures that two concurrent callers cannot both observe the same snapshot and both decide to spawn — the first caller's `acquire()` increments the counter before the second caller's `acquire()` checks it.
+- `WorkerPool.getOrCreate()` calls `releaseSpawnSlot()` after spawn completes (success or failure) to decrement `#spawningCount` and notify any waiters.
+- Promise dedup in `WorkerPool` is keyed by `"{name}-{nextId}"` where `nextId` comes from the manager's counter.
 
 #### Simplified WorkerPool
 
@@ -123,14 +123,13 @@ After extraction, WorkerPool is a thin coordinator.
 1. Get or create `WorkerLifecycleManager` for function
 2. Call `manager.acquire()` → returns `AcquireResult`
 3. `{ kind: "instance" }` → return `result.instance`
-4. `{ kind: "spawn" }`:
-   a. Call `manager.reserveSpawnSlot()`
-   b. Generate instance ID via `manager.nextId()`
-   c. Dedup key: `"{name}-{id}"`
-   d. Try: spawn new worker, wrap in `WorkerInstance`, call `manager.addInstance()`
-   e. Finally: call `manager.releaseSpawnSlot()` (always, even on failure)
-   f. On failure: delete dedup key, throw error (caller gets 502)
-   g. On success: return instance
+4. `{ kind: "spawn" }` (spawn slot already reserved atomically by `acquire()`):
+   a. Generate instance ID via `manager.nextId()`
+   b. Dedup key: `"{name}-{id}"`
+   c. Try: spawn new worker, wrap in `WorkerInstance`, call `manager.addInstance()`
+   d. Finally: call `manager.releaseSpawnSlot()` (always, even on failure)
+   e. On failure: delete dedup key, throw error (caller gets 502)
+   f. On success: return instance
 5. `{ kind: "wait", promise }`:
    a. Await the promise (in-flight spawn completes)
    b. Retry from step 2 (loop, not recursion, with max 3 retries to prevent infinite loops)

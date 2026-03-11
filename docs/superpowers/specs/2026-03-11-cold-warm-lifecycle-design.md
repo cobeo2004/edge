@@ -1,16 +1,18 @@
-# Cold/Warm Worker Lifecycle (Idle Timeout) — Design Spec
+# Cold/Warm Worker Lifecycle (Idle Timeout) — Design Spec (Historical)
+
+> **Note:** This is the original design spec for idle timeout support. The implementation has since been refactored into `WorkerLifecycleManager` with per-instance timers as part of the Worker Pool / Concurrency feature. Refer to `2026-03-11-worker-pool-concurrency-design.md` for the current architecture.
 
 ## Summary
 
-Add idle timeout support to WorkerPool so workers transition from warm (running) to cold (terminated) after a configurable period of inactivity. This mimics Supabase Edge Functions behavior where workers boot on first request and shut down when idle.
+Add idle timeout support so workers transition from warm (running) to cold (terminated) after a configurable period of inactivity. This mimics Supabase Edge Functions behavior where workers boot on first request and shut down when idle.
 
 ## Decisions
 
-- **Approach:** Inline in WorkerPool (Approach 1), structured for future extraction into WorkerLifecycleManager (Approach 2) when Phase 3 concurrency lands
+- **Approach (original):** Inline in WorkerPool, structured for future extraction into WorkerLifecycleManager. Now lives in `WorkerLifecycleManager` with per-instance idle timers.
 - **Idle detection:** Track active request count; idle timer starts only when count drops to zero; resets on new request
 - **Configuration:** Global `idleTimeout` on `EdgeFunctionServerOptions` + per-function override via `function.json`
 - **Default:** Disabled (no idle timeout unless explicitly configured) — preserves existing behavior
-- **Callback:** `onFunctionCold(name)` fires when a worker is terminated due to idle timeout
+- **Callback:** `onFunctionCold(name)` fires when the last instance is terminated and the function has zero workers, regardless of reason (idle timeout, crash, health check failure)
 - **Interaction with `workerMaxDuration`:** Independent — both timers run, whichever fires first wins
 
 ## Lifecycle Flow
