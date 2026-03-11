@@ -40,6 +40,10 @@ export class WorkerPool {
   #healthCheckFailures = new Map<string, number>();
   #healthCheckInFlight = new Set<string>();
 
+  // --- Idle timeout state (grouped for future WorkerLifecycleManager extraction) ---
+  #activeRequests = new Map<string, number>();
+  #idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   constructor(options: WorkerPoolOptions) {
     this.#registry = options.registry;
     this.#serverOptions = options.serverOptions;
@@ -75,6 +79,8 @@ export class WorkerPool {
 
       // Auto-remove on exit so next request respawns
       worker.addEventListener("exit", () => {
+        this.#clearIdleTimer(name);
+        this.#activeRequests.delete(name);
         this.#stopHealthCheck(name);
         this.#workers.delete(name);
       });
@@ -89,6 +95,8 @@ export class WorkerPool {
   }
 
   async restart(name: string): Promise<void> {
+    this.#clearIdleTimer(name);
+    this.#activeRequests.delete(name);
     this.#stopHealthCheck(name);
     const existing = this.#workers.get(name);
     if (existing) {
@@ -119,6 +127,7 @@ export class WorkerPool {
   }
 
   terminateAll(): void {
+    this.clearAllIdleTimers();
     for (const worker of this.#workers.values()) {
       worker.terminate();
     }
@@ -134,6 +143,25 @@ export class WorkerPool {
 
   getActiveWorkerNames(): string[] {
     return [...this.#workers.keys()];
+  }
+
+  incrementActiveRequests(name: string): void {
+    this.#clearIdleTimer(name);
+    this.#activeRequests.set(name, (this.#activeRequests.get(name) ?? 0) + 1);
+  }
+
+  decrementActiveRequests(name: string): void {
+    const count = Math.max(0, (this.#activeRequests.get(name) ?? 0) - 1);
+    this.#activeRequests.set(name, count);
+    if (count === 0) {
+      this.#startIdleTimer(name);
+    }
+  }
+
+  clearAllIdleTimers(): void {
+    for (const name of [...this.#idleTimers.keys()]) {
+      this.#clearIdleTimer(name);
+    }
   }
 
   async #spawnWorker(
@@ -355,5 +383,43 @@ export class WorkerPool {
         this.#serverOptions.healthCheckMaxFailures ??
         3,
     };
+  }
+
+  #resolveIdleTimeout(name: string): number | undefined {
+    // Per-function override takes priority
+    const fnConfig = this.#registry.getFunctionConfig(name);
+    if (fnConfig?.idleTimeout !== undefined) {
+      return fnConfig.idleTimeout;
+    }
+    // Fall back to server-level option
+    return this.#serverOptions.idleTimeout;
+  }
+
+  #startIdleTimer(name: string): void {
+    const timeout = this.#resolveIdleTimeout(name);
+    if (timeout === undefined) return;
+
+    this.#clearIdleTimer(name);
+
+    const timer = setTimeout(() => {
+      this.#idleTimers.delete(name);
+      const worker = this.#workers.get(name);
+      if (!worker) return;
+
+      this.#stopHealthCheck(name);
+      worker.terminate();
+      this.#workers.delete(name);
+      this.#serverOptions.onFunctionCold?.(name);
+    }, timeout);
+
+    this.#idleTimers.set(name, timer);
+  }
+
+  #clearIdleTimer(name: string): void {
+    const timer = this.#idleTimers.get(name);
+    if (timer) {
+      clearTimeout(timer);
+      this.#idleTimers.delete(name);
+    }
   }
 }
