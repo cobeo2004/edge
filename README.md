@@ -444,6 +444,8 @@ sequenceDiagram
     end
 ```
 
+> **WebSocket support:** Authentication also applies to WebSocket upgrade requests. When auth is configured, the initial HTTP upgrade request must carry valid credentials (via headers, cookies, or query params depending on your `AuthStrategy`). Rejected upgrades receive a 401 response before the WebSocket handshake. Authenticated claims are forwarded via `X-Auth-Claims` on the upgrade request, accessible in `Deno.serve()` before calling `Deno.upgradeWebSocket()`.
+
 ### Public functions (auth opt-out)
 
 Functions can skip authentication in two ways:
@@ -902,6 +904,34 @@ Override WebSocket settings per function via `function.json`:
 
 ```json
 { "maxWebSocketConnections": 50, "websocketKeepsAlive": false }
+```
+
+### Authentication
+
+WebSocket upgrades go through the same authentication flow as HTTP requests. When `auth` is configured, the client must include credentials in the upgrade request:
+
+```ts
+// Server
+const server = new EdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  auth: new JWTStrategy({ secret: process.env.JWT_SECRET! }),
+  publicFunctions: ["health"], // these skip auth for both HTTP and WebSocket
+});
+```
+
+Inside the Deno function, read claims from the upgrade request:
+
+```ts
+Deno.serve((req) => {
+  const raw = req.headers.get("x-auth-claims") ?? "";
+  const b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const claims = raw ? JSON.parse(atob(b64)) : {};
+  const { socket, response } = Deno.upgradeWebSocket(req);
+  socket.onopen = () => console.log(`User ${claims.sub} connected`);
+  socket.onmessage = (e) => socket.send(`${claims.sub}: ${e.data}`);
+  return response;
+});
 ```
 
 ### How it works
