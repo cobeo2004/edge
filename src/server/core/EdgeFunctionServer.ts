@@ -93,6 +93,20 @@ export class EdgeFunctionServer {
       })
     );
 
+    // Set auth check on adapter for Bun/Deno WebSocket upgrades
+    if (this.#options.auth && this.#server.setAuthCheck) {
+      this.#server.setAuthCheck(async (request, functionName) => {
+        return authenticateRequest({
+          request,
+          functionName,
+          auth: this.#options.auth!,
+          registry: this.#registry,
+          publicFunctions: this.#options.publicFunctions ?? [],
+          onAuthFailure: this.#options.onAuthFailure,
+        });
+      });
+    }
+
     // Register WebSocket upgrade handler if the adapter supports it
     if (this.#server.onUpgrade) {
       if (this.#server.supportsRawUpgrade) {
