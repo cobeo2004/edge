@@ -5,6 +5,7 @@ import { resolveAdapter } from "../adapters/detect.js";
 import { FunctionRegistry } from "./FunctionRegistry.js";
 import { WorkerPool } from "./WorkerPool.js";
 import { AuthMiddleware } from "./AuthMiddleware.js";
+import { authenticateRequest } from "./authenticateRequest.js";
 import { WorkerRequestHandler } from "./WorkerRequestHandler.js";
 import { FileWatcher } from "./FileWatcher.js";
 import { WebSocketProxyHandler } from "./WebSocketProxyHandler.js";
@@ -102,9 +103,50 @@ export class EdgeFunctionServer {
           head,
           functionName,
         ) => {
-          this.#pool!
-            .getOrCreate(functionName)
+          const authGate = this.#options.auth
+            ? (async () => {
+                const url = `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`;
+                const headers = new Headers();
+                for (const [key, value] of Object.entries(req.headers)) {
+                  if (value !== undefined) {
+                    headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+                  }
+                }
+                const request = new Request(url, { method: "GET", headers });
+
+                const result = await authenticateRequest({
+                  request,
+                  functionName,
+                  auth: this.#options.auth!,
+                  registry: this.#registry,
+                  publicFunctions: this.#options.publicFunctions ?? [],
+                });
+
+                if (!result.authenticated) {
+                  const body = JSON.stringify({ error: "Unauthorized" });
+                  clientSocket.write(
+                    `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+                  );
+                  clientSocket.destroy();
+                  return;
+                }
+
+                if (result.claims) {
+                  const encoded = Buffer.from(
+                    JSON.stringify(result.claims),
+                  ).toString("base64url");
+                  req.headers["x-auth-claims"] = encoded;
+                }
+              })()
+            : Promise.resolve();
+
+          authGate
+            .then(() => {
+              if (clientSocket.destroyed) return;
+              return this.#pool!.getOrCreate(functionName);
+            })
             .then((instance) => {
+              if (!instance) return;
               const socketPath = instance.worker.socketPath;
               return this.#wsProxyHandler.handleRawUpgrade(
                 req,
@@ -130,6 +172,7 @@ export class EdgeFunctionServer {
         const relayHandler: RelayUpgradeHandler = (
           functionName: string,
           hostSocket: HostWebSocket,
+          extraHeaders?: Record<string, string>,
         ) => {
           this.#pool!
             .getOrCreate(functionName)
@@ -142,6 +185,7 @@ export class EdgeFunctionServer {
                 instance.id,
                 `ws://localhost/${functionName}`,
                 "localhost",
+                extraHeaders,
               );
             })
             .catch(() => {
