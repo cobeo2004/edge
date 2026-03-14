@@ -900,11 +900,7 @@ const server = newEdgeFunctionServer({
 
 ### Per-function configuration
 
-Override WebSocket settings per function via `function.json`:
-
-```json
-{ "maxWebSocketConnections": 50, "websocketKeepsAlive": false }
-```
+WebSocket settings (`maxWebSocketConnections`, `websocketKeepsAlive`) are currently configured at the server level only. Per-function overrides via `function.json` are planned for a future release.
 
 ### Authentication
 
@@ -952,15 +948,14 @@ flowchart LR
 
 ### Integration with worker pool
 
-- WebSocket connections count as **active requests** for load balancing. A worker with 5 HTTP requests and 3 WebSocket connections appears as 8 active requests.
-- New WebSocket upgrades route to the **least-loaded** worker instance.
-- When `websocketKeepsAlive` is `true` (default), idle timeout and `workerMaxDuration` are paused while WebSocket connections are active.
+- New WebSocket upgrades route to the **least-loaded** worker instance (based on HTTP active requests).
+- When `websocketKeepsAlive` is `true` (default), the idle timeout is paused while WebSocket connections are active on a worker.
 - When `websocketKeepsAlive` is `false`, workers can be terminated with active connections — clients receive a close frame with code 1001 (Going Away).
 - Workers at `maxWebSocketConnections` are skipped during routing; new instances are spawned up to `maxWorkers`.
 
 ### Graceful shutdown
 
-When `server.stop()` is called, all active WebSocket connections receive a close frame with code 1001 (Going Away) before workers are terminated.
+When `server.stop()` is called, tracked WebSocket connections are cleaned up and workers are terminated. In raw splice mode (Node.js), both client and worker sockets are destroyed. In relay mode (Bun/Deno), host-side WebSockets are closed with code 1001 (Going Away).
 
 ## Configuration
 
