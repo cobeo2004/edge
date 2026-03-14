@@ -14,4 +14,8 @@ export interface FunctionConfig {
   maxWorkers?: number;
   /** Whether to eagerly spawn workers for this function at startup */
   eagerSpawn?: boolean;
+  /** Max WebSocket connections per worker instance (default: 100) */
+  maxWebSocketConnections?: number;
+  /** Whether active WebSocket connections prevent idle timeout and workerMaxDuration from killing the worker (default: true) */
+  websocketKeepsAlive?: boolean;
 }
