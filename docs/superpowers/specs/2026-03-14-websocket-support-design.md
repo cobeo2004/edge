@@ -93,26 +93,74 @@ Node's `http.Server` emits an `'upgrade'` event with `(req: IncomingMessage, soc
 | Bun     | Message relay  | Minimal (native C++)  | No                |
 | Deno    | Message relay  | Minimal               | No                |
 
-### Common Interface
+### Adapter Interface Changes
 
-Adapters delegate to a shared handler with a polymorphic interface:
+The current `AdapterServer` interface only supports request/response via `RequestHandler`. WebSocket upgrades require extending the adapter contract:
 
 ```ts
-// Node.js path — raw socket splice
-type RawUpgradeHandler = (
+// New optional method on AdapterServer
+interface AdapterServer {
+  listen(port: number, hostname?: string): Promise<void>;
+  close(): Promise<void>;
+  readonly port: number;
+
+  /** Register a handler for WebSocket upgrade requests (optional capability) */
+  onUpgrade?(handler: WebSocketUpgradeHandler): void;
+}
+
+// Node.js: receives raw socket for splice mode
+type NodeUpgradeHandler = (
   req: http.IncomingMessage,
   clientSocket: stream.Duplex,
   head: Buffer,
   functionName: string
 ) => void;
 
-// Bun/Deno path — message relay
-type WebSocketRelayHandler = (
-  functionName: string
-) => {
-  workerSocket: Duplex;
-  cleanup: () => void;
-};
+// Bun/Deno: adapter terminates WebSocket, provides message-oriented interface
+interface HostWebSocket {
+  send(data: string | ArrayBuffer): void;
+  close(code?: number, reason?: string): void;
+  onMessage(handler: (data: string | ArrayBuffer) => void): void;
+  onClose(handler: (code: number, reason: string) => void): void;
+  onError(handler: (error: Error) => void): void;
+}
+
+type RelayUpgradeHandler = (
+  functionName: string,
+  hostSocket: HostWebSocket
+) => void;
+
+```
+
+**Mode disambiguation:** `AdapterServer` exposes a readonly property to indicate its WebSocket capability:
+
+```ts
+interface AdapterServer {
+  // ... existing methods ...
+
+  /** Whether this adapter provides raw socket access for splice mode */
+  readonly supportsRawUpgrade: boolean;
+}
+```
+
+- Node.js adapter: `supportsRawUpgrade = true`, calls `onUpgrade` with `NodeUpgradeHandler`
+- Bun/Deno adapters: `supportsRawUpgrade = false`, call `onUpgrade` with `RelayUpgradeHandler`
+
+`WebSocketProxyHandler` checks `adapter.supportsRawUpgrade` at setup time to select splice vs. relay mode.
+
+Each adapter implements `onUpgrade()`:
+- **Node.js** — Registers `'upgrade'` event on the internal `http.Server` (accessible within the class), extracts function name from URL, calls the handler with `(req, socket, head, functionName)`
+- **Bun** — WebSocket config must be provided at `Bun.serve()` creation time. The adapter's `createServer()` accepts an optional `WebSocketUpgradeHandler` and passes the `websocket` handlers object to `Bun.serve()` in the initial config. Wraps `ServerWebSocket` in `HostWebSocket`, calls the handler with `(functionName, hostWebSocket)`
+- **Deno** — Detects upgrade in fetch handler, calls `Deno.upgradeWebSocket()`, wraps the `WebSocket` in `HostWebSocket`, calls the handler with `(functionName, hostWebSocket)`
+
+### Node.js `head` Buffer Handling
+
+The `'upgrade'` event passes a `head: Buffer` containing any data received after the upgrade request headers. This buffer must be written to the worker socket **before** piping begins, otherwise the first bytes of the WebSocket handshake may be lost:
+
+```ts
+workerSocket.write(head);
+clientSocket.pipe(workerSocket);
+workerSocket.pipe(clientSocket);
 ```
 
 ---
@@ -124,6 +172,10 @@ New class `WebSocketProxyHandler` in `src/server/core/` responsible for:
 ### Worker Resolution
 
 Given a function name, acquire a worker from the pool via `WorkerLifecycleManager`. The WebSocket connection counts as an active request, pinning to that specific worker instance.
+
+**Important:** WebSocket upgrades bypass the normal `WorkerRequestHandler` middleware to avoid double-counting active requests. The `WebSocketProxyHandler` calls `WorkerPool.acquire()` directly. Auth and permission middleware are applied before the upgrade reaches the proxy handler (at the adapter/server level), but the HTTP request/response flow in `WorkerRequestHandler` is not used.
+
+The `WebSocketProxyHandler` also requires access to the worker's Unix socket path. Both the `DenoHTTPWorker` interface and `DenoHTTPWorkerImpl` class must expose a `readonly socketPath: string` accessor (`DenoHTTPWorkerImpl` adds a getter backed by the existing private `socketFile` field).
 
 ### Unix Socket Upgrade
 
@@ -175,14 +227,26 @@ When a connection closes (from either side):
 
 ### Frame Codec for Relay Mode
 
-A lightweight WebSocket frame codec (~100-150 lines) for Bun/Deno relay mode:
+A lightweight WebSocket frame codec (~300-500 lines including tests) for Bun/Deno relay mode:
 
-- Read frame header (opcode, length, mask)
+- Read frame header (opcode, length, mask, 64-bit extended payload length)
 - Handle text, binary, ping, pong, close frames
+- Handle fragmented messages and continuation frames
+- Proper close handshake (send/receive close frames with status codes)
+- Masking/unmasking per RFC 6455
 - Write frames back to the socket
 - No extension negotiation (handled in the handshake, forwarded transparently)
 
 Zero external dependencies.
+
+### Proxy-Level Ping/Pong
+
+For long-lived connections, the proxy layer optionally sends WebSocket ping frames at a configurable interval to detect silently dropped connections. This is separate from application-level ping/pong:
+
+- `proxyPingInterval` option (default: disabled, e.g., `30000` ms to enable)
+- Applies to relay mode only (splice mode passes ping/pong through transparently)
+- If pong is not received within `proxyPingTimeout` (default: `10000` ms), the connection is considered dead and cleaned up
+- Proxy-initiated pings use a unique payload prefix (`__edge_proxy_ping:<timestamp>`) to distinguish from application-originated pings. Pongs are matched by payload content per RFC 6455 (pong must echo the ping payload). Application pings/pongs are forwarded transparently.
 
 ---
 
@@ -192,9 +256,20 @@ Zero external dependencies.
 
 Minimal changes needed:
 
-- **No bootstrap code changes for the happy path.** The user's `fetch()` handler calls `Deno.upgradeWebSocket(req)` and returns the response. The bootstrap passes it through.
+- **Request reconstruction for WebSocket upgrades** — The bootstrap currently does `new Request(url.toString(), req)` to rewrite the URL. `new Request()` will strip the internal WebSocket upgrade state that `Deno.upgradeWebSocket()` requires. For upgrade requests, the bootstrap must **skip Request reconstruction** and pass the original request directly to the user's `fetch()` handler. The URL rewriting should instead be communicated via headers (the existing `X-Deno-Worker-URL` header already carries the original URL). Concretely:
+  ```ts
+  // In bootstrap request handler:
+  if (req.headers.get("upgrade") === "websocket") {
+    // Pass original request directly — do NOT construct new Request()
+    // The user's handler gets the original req with upgrade state intact
+    return await handler(req);
+  }
+  // Non-upgrade: rewrite URL as before
+  const rewritten = new Request(url.toString(), req);
+  return await handler(rewritten);
+  ```
 - **Header preservation** — Existing header rewriting (`X-Deno-Worker-URL`, `X-Deno-Worker-Host`) must preserve WebSocket headers: `Upgrade`, `Connection`, `Sec-WebSocket-Key`, `Sec-WebSocket-Version`, `Sec-WebSocket-Protocol`, `Sec-WebSocket-Extensions`.
-- **101 status code** — Verify the bootstrap doesn't interfere with non-200 range responses.
+- **101 status code** — Verify the bootstrap doesn't interfere with non-200 range responses. The response from `Deno.upgradeWebSocket()` must be returned unmodified.
 
 ### User Function Code
 
