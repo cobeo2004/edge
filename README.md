@@ -67,6 +67,25 @@ All traffic between Node.js and Deno flows over a **Unix domain socket** using H
 
 The Deno-side bootstrap (`deno-bootstrap/serve.ts`) intercepts `Deno.serve()` calls from user code, extracts the handler, and re-serves it on the Unix socket with header rewriting applied.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server as Node.js Server
+    participant Socket as Unix Socket
+    participant Bootstrap as deno-bootstrap/serve.ts
+    participant Handler as User Handler
+
+    Client->>Server: HTTP Request
+    Server->>Socket: Rewrite headers<br/>X-Deno-Worker-URL<br/>X-Deno-Worker-Host<br/>X-Deno-Worker-Connection
+    Socket->>Bootstrap: HTTP/1.1 keep-alive
+    Bootstrap->>Bootstrap: Strip X-Deno-Worker-* headers<br/>Restore original URL & Host
+    Bootstrap->>Handler: Clean Request
+    Handler-->>Bootstrap: Response
+    Bootstrap-->>Socket: Response
+    Socket-->>Server: Response
+    Server-->>Client: Response
+```
+
 ### EdgeFunctionServer flow
 
 ```mermaid
@@ -212,6 +231,24 @@ const server = newEdgeFunctionServer({
 });
 ```
 
+```mermaid
+flowchart TD
+    A["detectRuntime()"] --> B{Runtime?}
+    B -->|Node.js| C["nodeAdapter"]
+    B -->|Bun| D["bunAdapter"]
+    B -->|Deno| E["denoAdapter"]
+    C --> F["createServer(handler)"]
+    D --> F
+    E --> F
+    F --> G["AdapterServer"]
+    G --> H["listen(port)"]
+    G --> I["close()"]
+    G --> J["port"]
+
+    style A fill:#f9f,stroke:#333
+    style G fill:#9cf,stroke:#333
+```
+
 > **Note:** Only the host-facing HTTP server is adapted. Worker communication (`worker.request()`) always uses `node:http` over Unix sockets — all three runtimes support this via Node.js compatibility layers.
 
 ## Environment Variables & Secrets
@@ -240,6 +277,18 @@ functions/
 4. `EdgeFunctionServerOptions.env` (programmatic)
 5. Per-function `.env` at `functionsDir/<name>/.env`
 6. `workerOptions.env` (programmatic per-worker)
+
+```mermaid
+flowchart BT
+    A["1. process.env<br/>(host environment)"] --> B["2. Global .env<br/>(functionsDir/.env)"]
+    B --> C["3. envFiles<br/>(array order)"]
+    C --> D["4. EdgeFunctionServerOptions.env<br/>(programmatic)"]
+    D --> E["5. Per-function .env<br/>(functionsDir/name/.env)"]
+    E --> F["6. workerOptions.env<br/>(programmatic per-worker)"]
+
+    style A fill:#f9f,stroke:#333
+    style F fill:#9cf,stroke:#333
+```
 
 ### Server-level env options
 
@@ -367,6 +416,34 @@ Deno.serve((req) => {
 
 > **Note:** The header is always stripped from incoming requests to prevent spoofing. It is only set by the server when authentication succeeds with claims.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server as EdgeFunctionServer
+    participant Auth as AuthStrategy
+    participant Worker as Deno Worker
+
+    Client->>Server: Request
+    Server->>Server: Strip X-Auth-Claims header
+    Server->>Auth: extractCredentials(request)
+    Auth-->>Server: credentials
+
+    alt No credentials
+        Server-->>Client: 401 Unauthorized
+    else Has credentials
+        Server->>Auth: verify(credentials)
+        alt Invalid
+            Auth-->>Server: { valid: false, error }
+            Server-->>Client: 401 Unauthorized
+        else Valid
+            Auth-->>Server: { valid: true, claims }
+            Server->>Worker: Request + X-Auth-Claims (base64url)
+            Worker-->>Server: Response
+            Server-->>Client: Response
+        end
+    end
+```
+
 ### Public functions (auth opt-out)
 
 Functions can skip authentication in two ways:
@@ -468,6 +545,27 @@ functions/
 
 If `workerOptions.runFlags` is set explicitly, it takes absolute priority over all profiles.
 
+```mermaid
+flowchart TD
+    A{runFlags set?} -->|Yes| B["Use runFlags directly"]
+    A -->|No| C{functionPermissions?}
+    C -->|Yes| D["Use functionPermissions"]
+    C -->|No| E{function.json<br/>permissions?}
+    E -->|Yes| F["Use function.json profile"]
+    E -->|No| G{defaultPermissionProfile?}
+    G -->|Yes| H["Use default profile"]
+    G -->|No| I["Fallback: 'standard'"]
+    D --> J["Resolve to flags"]
+    F --> J
+    H --> J
+    I --> J
+    B --> K["Augment with<br/>--allow-read / --allow-write<br/>(socket, script, import map)"]
+    J --> K
+
+    style A fill:#f9f,stroke:#333
+    style K fill:#9cf,stroke:#333
+```
+
 > **Note:** The factory's automatic `--allow-read` / `--allow-write` augmentation for socket files, import maps, and config files still applies on top of whatever the profile resolves to.
 
 ## Execution Limits
@@ -556,6 +654,38 @@ const server = newEdgeFunctionServer({
 
 Health checks are opt-in — they only run when `healthCheckInterval` is set. Options can be set at both the server level and per-worker level (via `workerOptions`), with per-worker values taking precedence.
 
+```mermaid
+flowchart LR
+    subgraph Memory["Memory Limit"]
+        M1["V8 heap > memoryLimitMb"] --> M2["OOM kill"]
+        M2 --> M3["Respawn on next request"]
+    end
+
+    subgraph Timeout["Per-Request Timeout"]
+        T1["Request > requestTimeout"] --> T2["Abort request (504)"]
+        T2 --> T3["Worker stays alive"]
+    end
+
+    subgraph Duration["Worker Max Duration"]
+        D1["Uptime > workerMaxDuration"] --> D2["Terminate worker"]
+        D2 --> D3["Respawn on next request"]
+    end
+
+    subgraph Health["Health Checks"]
+        H1["Ping every healthCheckInterval"] --> H2{"Response within\nhealthCheckTimeout?"}
+        H2 -->|No| H3["Increment failure count"]
+        H3 --> H4{">= maxFailures?"}
+        H4 -->|Yes| H5["Restart worker"]
+        H4 -->|No| H1
+        H2 -->|Yes| H6["Reset failure count"]
+    end
+
+    style M2 fill:#f9f,stroke:#333
+    style T2 fill:#f9f,stroke:#333
+    style D2 fill:#f9f,stroke:#333
+    style H5 fill:#f9f,stroke:#333
+```
+
 ## Idle Timeout (Cold/Warm Lifecycle)
 
 Workers can automatically transition between **warm** (running) and **cold** (terminated) states based on activity, mimicking Supabase Edge Functions behavior:
@@ -594,6 +724,21 @@ A function with `"idleTimeout": 60000` stays warm for 60 seconds even if the ser
 - Health check pings do not count as requests and do not reset the idle timer.
 - When `eagerSpawn` is enabled, eagerly spawned workers will go cold if no requests arrive within the idle timeout.
 
+```mermaid
+stateDiagram-v2
+    [*] --> Cold
+    Cold --> Spawning: Request arrives
+    Spawning --> Warm: Worker ready
+    Warm --> Warm: Request (reset idle timer)
+    Warm --> Idle: All requests complete<br/>(start idle timer)
+    Idle --> Warm: New request<br/>(cancel timer)
+    Idle --> Cold: idleTimeout expires<br/>(terminate worker)
+    Warm --> Cold: workerMaxDuration expires
+
+    note right of Spawning: Cold start latency
+    note right of Idle: Timer resets on each request
+```
+
 ## Worker Pool & Concurrency
 
 Run multiple worker instances per function to handle concurrent requests. Workers are managed by a `WorkerLifecycleManager` that handles spawning, load balancing, idle scale-down, health checks, and cold/warm transitions.
@@ -617,6 +762,30 @@ When `maxWorkers` is 1 (the default), behavior is identical to pre-concurrency v
 - **Scale up:** When a request arrives and all existing workers are busy, a new worker is spawned (up to `maxWorkers`). Requests are routed to the least-loaded instance.
 - **Scale down:** Idle workers are terminated after `idleTimeout` ms, but never below `minWorkers`. When the last instance is removed, `onFunctionCold` fires.
 - **At capacity:** When all `maxWorkers` instances are busy and no spawn slots are available, requests are routed to the least-loaded worker (overload).
+
+```mermaid
+flowchart TD
+    A["Incoming Request"] --> B{Workers exist?}
+    B -->|No| C["Spawn worker #1"]
+    C --> D["Route to worker"]
+    B -->|Yes| E{All busy?}
+    E -->|No| F["Route to least-loaded"]
+    E -->|Yes| G{"Below maxWorkers?"}
+    G -->|Yes| H["Spawn new worker"]
+    H --> D
+    G -->|No| F
+
+    I["Idle timer fires"] --> J{"> minWorkers?"}
+    J -->|Yes| K["Terminate idle worker"]
+    J -->|No| L["Keep alive"]
+    K --> M{Last instance?}
+    M -->|Yes| N["onFunctionCold()"]
+    M -->|No| I
+
+    style A fill:#f9f,stroke:#333
+    style D fill:#9cf,stroke:#333
+    style N fill:#f9f,stroke:#333
+```
 
 ### Per-function overrides
 
@@ -870,6 +1039,21 @@ const server = newEdgeFunctionServer({
 });
 ```
 
+```mermaid
+flowchart LR
+    A["Deno stdout/stderr"] --> B["readline stream"]
+    B --> C{logLevel filter}
+    C -->|below threshold| D["Discard"]
+    C -->|meets threshold| E["Worker onLog callback"]
+    E --> F{"EdgeFunctionServer?"}
+    F -->|Yes| G["Server onLog<br/>(functionName, level,<br/>source, message)"]
+    F -->|No| H["Console output<br/>[deno] prefix"]
+
+    style A fill:#f9f,stroke:#333
+    style G fill:#9cf,stroke:#333
+    style H fill:#9cf,stroke:#333
+```
+
 ### Backward compatibility
 
 The legacy `printOutput` and `printCommandAndArguments` booleans still work. When `logLevel` is not set:
@@ -935,6 +1119,19 @@ const server = newEdgeFunctionServer({
 
 Set `watchSharedFolders: false` to disable shared folder watching while keeping function-level hot-reload active.
 
+```mermaid
+flowchart TD
+    A["File change detected"] --> B{Shared folder?}
+    B -->|No| C["Restart that function's worker"]
+    B -->|Yes| D{watchSharedFolders?}
+    D -->|true| E["Restart ALL workers"]
+    D -->|false| F["Ignore change"]
+
+    style A fill:#f9f,stroke:#333
+    style E fill:#9cf,stroke:#333
+    style C fill:#9cf,stroke:#333
+```
+
 ## Import Maps
 
 You can pass an [import map](https://docs.deno.com/runtime/fundamentals/configuration/#an-import-map) to the worker with the `importMapPath` option. The import map file is automatically added to `--allow-read` permissions.
@@ -963,6 +1160,21 @@ const worker = await newDenoHTTPWorker(
 ```
 
 Alternatively, use `configPath` to point to a full `deno.json` which supports `imports`, `nodeModulesDir`, `compilerOptions`, and more.
+
+```mermaid
+flowchart TD
+    A["Scan functionsDir"] --> B["Find _shared/ folders"]
+    B --> C["Recursively scan<br/>.ts .tsx .js .jsx .mjs .json"]
+    C --> D["Generate import map entries<br/>e.g. '_shared/cors.ts' → path"]
+    D --> E{User importMapPath?}
+    E -->|Yes| F["Merge entries<br/>(user map takes precedence)"]
+    E -->|No| G["Use generated map"]
+    F --> H["Pass to Deno via --import-map"]
+    G --> H
+
+    style A fill:#f9f,stroke:#333
+    style H fill:#9cf,stroke:#333
+```
 
 ## API Reference
 
