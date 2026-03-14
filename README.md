@@ -20,6 +20,7 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 - [Execution Limits](#execution-limits)
 - [Idle Timeout (Cold/Warm Lifecycle)](#idle-timeout-coldwarm-lifecycle)
 - [Worker Pool & Concurrency](#worker-pool--concurrency)
+- [WebSocket Support](#websocket-support)
 - [Configuration](#configuration)
 - [Logging](#logging)
 - [Shared Folders](#shared-folders)
@@ -36,16 +37,22 @@ flowchart LR
         A -->|polls for socket| C[Unix Socket]
         A -->|warm request| D[Worker ready]
         D --> E["worker.request()"]
+        D --> W["WebSocket upgrade"]
         E -->|"HTTP/1 over Unix socket"| C
+        W -->|"HTTP upgrade + socket splice"| C
     end
 
     subgraph Deno Process
         C --> F["deno-bootstrap/serve.ts"]
         F -->|intercepts Deno.serve| G[Import user module]
         G --> H["User fetch() handler"]
+        H -->|HTTP| I[Response]
+        H -->|"Deno.upgradeWebSocket()"| J[WebSocket]
     end
 
     style C fill:#f9f,stroke:#333
+    style W fill:#9cf,stroke:#333
+    style J fill:#9cf,stroke:#333
 ```
 
 ### How communication works
@@ -64,14 +71,19 @@ The Deno-side bootstrap (`deno-bootstrap/serve.ts`) intercepts `Deno.serve()` ca
 
 ```mermaid
 flowchart TD
-    A[HTTP Request] --> B[EdgeFunctionServer]
+    A[Incoming Request] --> B[EdgeFunctionServer]
     B -->|"parse /:functionName/*"| C{Function exists?}
     C -->|No| D[404 Not Found]
-    C -->|Yes| E[Get or spawn worker]
-    E -->|lazy spawn| F[newDenoHTTPWorker]
-    F --> G[Proxy request to worker]
+    C -->|Yes| E{WebSocket upgrade?}
+    E -->|No| F[Get or spawn worker]
+    F --> G[Proxy HTTP request to worker]
     G -->|strip function prefix| H[Deno worker handles request]
     H --> I[Response piped back]
+    E -->|Yes| J[Get or spawn worker]
+    J --> K[Forward upgrade over Unix socket]
+    K --> L["Deno.upgradeWebSocket()"]
+    L --> M[Socket splice / message relay]
+    M --> N[Bidirectional WebSocket frames]
 ```
 
 ## Installation
@@ -646,6 +658,111 @@ const server = newEdgeFunctionServer({
 });
 ```
 
+## WebSocket Support
+
+Edge functions can serve WebSocket connections. The server transparently proxies WebSocket upgrades through to Deno workers over Unix sockets.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server as EdgeFunctionServer
+    participant Worker as Deno Worker
+
+    Client->>Server: GET /my-func (Upgrade: websocket)
+    Server->>Server: Extract function name, acquire worker
+    Server->>Worker: Forward HTTP upgrade over Unix socket
+    Worker->>Worker: Deno.upgradeWebSocket(req)
+    Worker-->>Server: 101 Switching Protocols
+    Server-->>Client: 101 Switching Protocols
+    Client<<->>Worker: Bidirectional WebSocket frames
+    Note over Server: Node.js: raw socket splice (zero overhead)<br/>Bun/Deno: message relay
+```
+
+### Deno function code
+
+Functions use the standard `Deno.upgradeWebSocket()` API — no special libraries needed:
+
+```ts
+// functions/chat/index.ts
+Deno.serve((req) => {
+  if (req.headers.get("upgrade") !== "websocket") {
+    return new Response("Expected WebSocket", { status: 426 });
+  }
+  const { socket, response } = Deno.upgradeWebSocket(req);
+  socket.onopen = () => console.log("Client connected");
+  socket.onmessage = (e) => socket.send(`echo: ${e.data}`);
+  socket.onclose = () => console.log("Client disconnected");
+  return response;
+});
+```
+
+### Client code
+
+Any standard WebSocket client works — the client connects to the server, not directly to Deno:
+
+```ts
+// Browser, Node.js, Bun, Deno, Python, Go — any WebSocket client
+const ws = new WebSocket("ws://localhost:3000/chat");
+ws.onopen = () => ws.send("hello");
+ws.onmessage = (e) => console.log(e.data); // "echo: hello"
+```
+
+### Server configuration
+
+```ts
+const server = newEdgeFunctionServer({
+  functionsDir: "/path/to/functions",
+  port: 3000,
+  maxWebSocketConnections: 100, // per worker instance (default: 100)
+  websocketKeepsAlive: true, // WS connections prevent idle timeout (default: true)
+  onWebSocketConnect: (functionName, connectionId) => {
+    console.log(`WS connected: ${functionName} (${connectionId})`);
+  },
+  onWebSocketClose: (functionName, connectionId, code, reason) => {
+    console.log(`WS closed: ${functionName} (${code}: ${reason})`);
+  },
+  onWebSocketError: (functionName, connectionId, error) => {
+    console.error(`WS error: ${functionName}`, error);
+  },
+});
+```
+
+### Per-function configuration
+
+Override WebSocket settings per function via `function.json`:
+
+```json
+{ "maxWebSocketConnections": 50, "websocketKeepsAlive": false }
+```
+
+### How it works
+
+```mermaid
+flowchart LR
+    subgraph "Proxy Strategy (per adapter)"
+        direction TB
+        N["Node.js<br/>Raw socket splice<br/>Zero overhead after handshake"]
+        B["Bun<br/>Message relay via<br/>native Bun.serve() WebSocket"]
+        D["Deno<br/>Message relay via<br/>Deno.upgradeWebSocket()"]
+    end
+```
+
+- **Node.js adapter:** Intercepts the `'upgrade'` event on `http.Server`, forwards the raw HTTP upgrade to the worker's Unix socket, then pipes the two sockets together. After the handshake, it's a zero-copy byte pipe.
+- **Bun adapter:** `Bun.serve()` terminates WebSocket on the host side. Messages are relayed bidirectionally to the worker over the Unix socket.
+- **Deno adapter:** `Deno.upgradeWebSocket()` terminates WebSocket on the host side. Same relay approach as Bun.
+
+### Integration with worker pool
+
+- WebSocket connections count as **active requests** for load balancing. A worker with 5 HTTP requests and 3 WebSocket connections appears as 8 active requests.
+- New WebSocket upgrades route to the **least-loaded** worker instance.
+- When `websocketKeepsAlive` is `true` (default), idle timeout and `workerMaxDuration` are paused while WebSocket connections are active.
+- When `websocketKeepsAlive` is `false`, workers can be terminated with active connections — clients receive a close frame with code 1001 (Going Away).
+- Workers at `maxWebSocketConnections` are skipped during routing; new instances are spawned up to `maxWorkers`.
+
+### Graceful shutdown
+
+When `server.stop()` is called, all active WebSocket connections receive a close frame with code 1001 (Going Away) before workers are terminated.
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -705,6 +822,11 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `defaultPermissionProfile` | `string`                                              | Default permission profile for all functions (default: `"standard"`)                            |
 | `functionPermissions`      | `Record<string, string \| string[]>`                  | Per-function permission overrides (priority over function.json)                                 |
 | `permissionProfiles`       | `Record<string, string[]>`                            | Custom named permission profiles (merged with built-ins)                                        |
+| `maxWebSocketConnections`  | `number`                                              | Max WebSocket connections per worker instance (default: `100`)                                  |
+| `websocketKeepsAlive`      | `boolean`                                             | Active WebSocket connections prevent idle timeout (default: `true`)                             |
+| `onWebSocketConnect`       | `(functionName: string, connectionId: string) => void` | Called when a WebSocket connection is established                                              |
+| `onWebSocketClose`         | `(functionName: string, connectionId: string, code: number, reason: string) => void` | Called when a WebSocket connection is closed                    |
+| `onWebSocketError`         | `(functionName: string, connectionId: string, error: Error) => void` | Called when a WebSocket connection errors                                        |
 
 ## Logging
 
@@ -876,6 +998,12 @@ Alternatively, use `configPath` to point to a full `deno.json` which supports `i
 | `FunctionConfig`                      | Type     | Per-function configuration from `function.json`                           |
 | `BUILT_IN_PROFILES`                   | Object   | Built-in permission profiles (`none`, `strict`, `standard`, `permissive`) |
 | `resolvePermissionFlags(value, opts)` | Function | Resolve a profile name or flags array to Deno run flags                   |
+| `WebSocketProxyHandler`               | Class    | WebSocket proxy with connection tracking, splice/relay modes              |
+| `WebSocketConnection`                 | Type     | Tracked WebSocket connection metadata                                     |
+| `HostWebSocket`                       | Type     | Runtime-agnostic WebSocket interface for Bun/Deno relay mode              |
+| `WebSocketHooks`                      | Type     | Lifecycle hook callbacks (`onWebSocketConnect`, `Close`, `Error`)         |
+| `WebSocketConfig`                     | Type     | WebSocket-specific config options                                         |
+| `WebSocketUpgradeHandler`             | Type     | Union type for adapter upgrade handlers (splice or relay)                 |
 
 ## License
 
