@@ -39,18 +39,20 @@ type AuthenticateSuccess = { authenticated: true; claims?: Record<string, unknow
 type AuthenticateFailure = { authenticated: false; response: Response };
 type AuthenticateResult = AuthenticateSuccess | AuthenticateFailure;
 
-async function authenticateRequest(
-  request: Request,
-  functionName: string,
-  auth: AuthStrategy,
-  registry: FunctionRegistry,
-  publicFunctions: string[],
-  onAuthFailure?: (request: Request, result: AuthResult) => Response,
-): Promise<AuthenticateResult>
+interface AuthenticateOptions {
+  request: Request;
+  functionName: string;
+  auth: AuthStrategy;
+  registry: FunctionRegistry;
+  publicFunctions: string[];
+  onAuthFailure?: (request: Request, error: AuthResult) => Response | Promise<Response>;
+}
+
+async function authenticateRequest(options: AuthenticateOptions): Promise<AuthenticateResult>
 ```
 
-Logic extracted from `AuthMiddleware` lines 51-88:
-1. Check `publicFunctions` array or `registry.getConfig(functionName).auth === false`
+Logic extracted from `AuthMiddleware.middleware()`:
+1. Check `publicFunctions` array or `registry.getFunctionConfig(functionName)?.auth === false`
 2. If public → return `{ authenticated: true }`
 3. Extract credentials via `auth.extractCredentials(request)`
 4. If extraction fails → return `{ authenticated: false, response: 401 }`
@@ -58,7 +60,7 @@ Logic extracted from `AuthMiddleware` lines 51-88:
 6. If invalid → return `{ authenticated: false, response: 401 }`
 7. Return `{ authenticated: true, claims }`
 
-The `onAuthFailure` callback is used for custom 401 responses, same as HTTP.
+The `onAuthFailure` callback is used for custom 401 responses (returns `Response | Promise<Response>`), same as HTTP.
 
 ### 2. AuthMiddleware Refactoring
 
@@ -67,10 +69,14 @@ The `onAuthFailure` callback is used for custom 401 responses, same as HTTP.
 ```ts
 middleware() {
   return async (ctx, next) => {
-    const result = await authenticateRequest(
-      ctx.request, ctx.functionName, this.#auth,
-      this.#registry, this.#publicFunctions, this.#onAuthFailure
-    );
+    const result = await authenticateRequest({
+      request: ctx.request,
+      functionName: ctx.functionName,
+      auth: this.#auth,
+      registry: this.#registry,
+      publicFunctions: this.#publicFunctions,
+      onAuthFailure: this.#onAuthFailure,
+    });
     if (!result.authenticated) return result.response;
     ctx.authClaims = result.claims;
     return next();
@@ -82,25 +88,31 @@ All existing HTTP auth behavior is preserved identically.
 
 ### 3. WebSocket Auth in EdgeFunctionServer
 
-Auth checks added in `EdgeFunctionServer.start()` where upgrade handlers are registered.
+Auth checks added in `EdgeFunctionServer.start()` where upgrade handlers are registered. **Auth is only checked when `this.#options.auth` is configured** — when no auth strategy is set, upgrade handlers behave exactly as before (no auth gating).
 
 **Node.js path (raw socket upgrade):**
-1. Construct a `Request` object from the incoming `http.IncomingMessage`
-2. Call `authenticateRequest()` with the function name
-3. If not authenticated: write raw `HTTP/1.1 401 Unauthorized\r\n\r\n` to socket, destroy it, return
-4. If authenticated with claims: set `X-Auth-Claims` header on `req` before passing to `wsProxyHandler.handleNodeUpgrade()`
+1. If `this.#options.auth` is not set, skip auth and proceed directly to proxy
+2. Construct a `Request` object from the incoming `http.IncomingMessage`
+3. Call `authenticateRequest()` with the function name
+4. If not authenticated: serialize a fixed `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: ...\r\n\r\n{"error":"..."}` to socket, destroy it, return. Note: `onAuthFailure` is **not** used for Node.js raw socket 401 because converting a `Response` to raw HTTP bytes adds complexity with minimal benefit — the fixed 401 is sufficient for WebSocket clients which typically only inspect the status code
+5. If authenticated with claims: set `X-Auth-Claims` header on `req` before passing to `wsProxyHandler.handleNodeUpgrade()`
 
 **Bun/Deno path (relay upgrade):**
-1. Auth check happens in the adapter's fetch handler before accepting the upgrade
-2. Call `authenticateRequest()` with the existing `Request` object
-3. If not authenticated: return the 401 Response directly (don't call `server.upgrade()` / `Deno.upgradeWebSocket()`)
-4. If authenticated with claims: pass claims as `extraHeaders` to the relay handler
+1. If `this.#options.auth` is not set, skip auth and proceed directly to upgrade
+2. Auth check happens in the adapter's fetch handler before accepting the upgrade
+3. Call `authenticateRequest()` with the existing `Request` object — `onAuthFailure` applies here since we have a normal HTTP response path
+4. If not authenticated: return the 401 Response directly (don't call `server.upgrade()` / `Deno.upgradeWebSocket()`)
+5. If authenticated with claims: pass claims through `ws.data` (Bun) or directly (Deno) as `extraHeaders` to the relay handler
 
 ### 4. Claims Forwarding
 
 **Node.js splice path:** Set `X-Auth-Claims` header on the `req` object before calling `handleNodeUpgrade()`. The handler already forwards request headers to the worker Unix socket — no `WebSocketProxyHandler` changes needed.
 
-**Bun/Deno relay path:** Add optional `extraHeaders?: Record<string, string>` parameter to:
+**Bun relay path:** The Bun adapter threads data through `ws.data`. Currently `ws.data` carries `{ functionName }`. Extend to `{ functionName, extraHeaders?: Record<string, string> }`. The `open` callback reads `ws.data.extraHeaders` and passes it to `relayHandler`. This is the key mechanism for Bun since auth runs in `fetch` but the relay handler fires in `open`.
+
+**Deno relay path:** Simpler — everything runs in a single synchronous flow inside the fetch handler. Auth check and `Deno.upgradeWebSocket()` happen in sequence. Pass `extraHeaders` directly to the relay handler call.
+
+Add optional `extraHeaders?: Record<string, string>` parameter to:
 - `RelayUpgradeHandler` type in `WebSocketTypes.ts`
 - `handleRelayUpgrade()` in `WebSocketProxyHandler.ts`
 
@@ -117,27 +129,30 @@ Deno.serve((req) => {
 ### 5. Auth Rejection Behavior
 
 - **Before WebSocket handshake** — rejection returns HTTP 401, no WebSocket connection is established
-- **Same `onAuthFailure` callback** — reused for both HTTP and WebSocket rejections
-- **Node.js raw socket:** Write HTTP 401 response bytes directly to the Duplex socket, then destroy
-- **Bun/Deno:** Return standard `Response` object with 401 status
+- **Node.js raw socket:** Write fixed HTTP 401 JSON response bytes directly to the Duplex socket (with `Content-Type` and `Content-Length` headers), then destroy
+- **Bun/Deno:** Return standard `Response` object with 401 status; `onAuthFailure` callback applies here
+
+### 6. Function Existence vs Auth Ordering
+
+When a WebSocket upgrade targets a non-existent function, the 404 check takes precedence over auth. The adapters already extract the function name and validate it's non-empty. The upgrade handlers in `EdgeFunctionServer` check function existence (via the worker pool) before running auth — this matches the HTTP path where routing happens before middleware, and avoids leaking auth requirements for functions that don't exist.
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/server/core/authenticateRequest.ts` | **New** — shared auth helper function |
+| `src/server/core/authenticateRequest.ts` | **New** — shared auth helper function with `AuthenticateOptions` interface |
 | `src/server/core/AuthMiddleware.ts` | Refactor to use `authenticateRequest()` |
-| `src/server/core/EdgeFunctionServer.ts` | Add auth checks in upgrade handlers |
+| `src/server/core/EdgeFunctionServer.ts` | Add auth checks in upgrade handlers (gated on `this.#options.auth`) |
 | `src/server/core/WebSocketTypes.ts` | Add `extraHeaders` to `RelayUpgradeHandler` |
 | `src/server/core/WebSocketProxyHandler.ts` | Accept `extraHeaders` in `handleRelayUpgrade()` |
-| `src/server/adapters/bun.ts` | Pass auth check result and headers through upgrade flow |
-| `src/server/adapters/deno.ts` | Pass auth check result and headers through upgrade flow |
+| `src/server/adapters/bun.ts` | Extend `ws.data` to carry `extraHeaders`, pass through to relay handler |
+| `src/server/adapters/deno.ts` | Pass `extraHeaders` directly to relay handler call |
 | `src/index.ts` | Export `authenticateRequest` if needed |
 
 ## Testing
 
 ### Unit tests
-- `authenticateRequest()` — public bypass, valid credentials, invalid credentials, missing credentials, registry `auth: false`
+- `authenticateRequest()` — public bypass, valid credentials, invalid credentials, missing credentials, registry `auth: false` config, `onAuthFailure` callback invoked
 - Existing `AuthMiddleware` tests pass unchanged after refactoring
 
 ### Integration tests (WebSocket + auth)
@@ -145,7 +160,9 @@ Deno.serve((req) => {
 - Invalid/missing JWT → 401 returned, no WebSocket connection
 - `publicFunctions` entry → connection established without credentials
 - `function.json` `auth: false` → connection established without credentials
-- `onAuthFailure` callback fires for rejected WebSocket upgrades
+- `onAuthFailure` callback fires for rejected WebSocket upgrades (Bun/Deno path)
+- WebSocket upgrade to non-existent function with auth → 404 (not 401)
+- No auth configured + WebSocket upgrade → connection established (no regression)
 
 ### No regressions
 - All existing HTTP auth tests pass unchanged
@@ -156,3 +173,4 @@ Deno.serve((req) => {
 - Per-message auth (re-validating credentials on each WebSocket frame)
 - Token refresh/expiry during an active WebSocket connection
 - WebSocket-specific auth strategies (these can be added later via the existing `AuthStrategy` interface)
+- `onAuthFailure` for Node.js raw socket path (fixed 401 JSON response used instead)
