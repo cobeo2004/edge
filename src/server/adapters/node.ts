@@ -1,6 +1,7 @@
 import http from "node:http";
 import { Readable } from "node:stream";
 import type { ServerAdapter, AdapterServer, RequestHandler } from "./types.js";
+import type { NodeUpgradeHandler, WebSocketUpgradeHandler } from "../core/WebSocketTypes.js";
 
 function toWebRequest(req: http.IncomingMessage): Request {
   const host = req.headers.host ?? "localhost";
@@ -51,8 +52,14 @@ async function writeWebResponse(
 }
 
 class NodeAdapterServer implements AdapterServer {
+  readonly supportsRawUpgrade = true as const;
   #server: http.Server;
   #handler: RequestHandler;
+  #upgradeHandler?: NodeUpgradeHandler;
+
+  onUpgrade(handler: WebSocketUpgradeHandler): void {
+    this.#upgradeHandler = handler as NodeUpgradeHandler;
+  }
 
   constructor(handler: RequestHandler) {
     this.#handler = handler;
@@ -81,6 +88,23 @@ class NodeAdapterServer implements AdapterServer {
     await new Promise<void>((resolve) => {
       this.#server.listen(port, hostname, resolve);
     });
+
+    if (this.#upgradeHandler) {
+      const upgradeHandler = this.#upgradeHandler;
+      this.#server.on("upgrade", (req, socket, head) => {
+        const url = new URL(
+          req.url ?? "/",
+          `http://${req.headers.host ?? "localhost"}`,
+        );
+        const functionName = url.pathname.split("/")[1] ?? "";
+        if (!functionName) {
+          socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        upgradeHandler(req, socket, head, functionName);
+      });
+    }
   }
 
   async close(): Promise<void> {
