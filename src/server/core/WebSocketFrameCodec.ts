@@ -26,6 +26,7 @@ export function parseFrame(data: Buffer): WebSocketFrame | null {
 
   const byte0 = data[0];
   const byte1 = data[1];
+  if (byte0 === undefined || byte1 === undefined) return null;
 
   const fin = (byte0 & 0x80) !== 0;
   const opcode = (byte0 & 0x0f) as WebSocketOpcode;
@@ -59,7 +60,7 @@ export function parseFrame(data: Buffer): WebSocketFrame | null {
 
   if (masked && maskKey) {
     for (let i = 0; i < payloadLength; i++) {
-      payload[i] ^= maskKey[i % 4];
+      payload[i]! ^= maskKey[i % 4]!;
     }
   }
 
@@ -78,7 +79,7 @@ export function parseFrame(data: Buffer): WebSocketFrame | null {
 export function writeFrame(
   opcode: WebSocketOpcode,
   payload: Buffer,
-  fin = true
+  fin = true,
 ): Buffer {
   const finBit = fin ? 0x80 : 0x00;
   const byte0 = finBit | opcode;

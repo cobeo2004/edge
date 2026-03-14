@@ -339,9 +339,10 @@ export class WebSocketProxyHandler {
                 hostSocket.send(frame.payload.toString());
               } else {
                 hostSocket.send(
-                  frame.payload.buffer.slice(
+                  new Uint8Array(
+                    frame.payload.buffer,
                     frame.payload.byteOffset,
-                    frame.payload.byteOffset + frame.payload.byteLength
+                    frame.payload.byteLength
                   )
                 );
               }
