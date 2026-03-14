@@ -7,6 +7,7 @@ import {
   parseFrame,
   writeFrame,
   WebSocketOpcode,
+  WebSocketFrameError,
   buildClosePayload,
   parseClosePayload,
   type WebSocketFrame,
@@ -178,7 +179,7 @@ export class WebSocketProxyHandler {
         const headerStr = responseBuffer.subarray(0, headerEnd).toString();
         const statusLine = headerStr.split("\r\n")[0] ?? "";
 
-        if (!statusLine.includes("101")) {
+        if (!/^HTTP\/\d\.\d\s+101\b/.test(statusLine)) {
           socket.destroy();
           reject(new Error(`Worker did not upgrade: ${statusLine}`));
           return;
@@ -227,15 +228,19 @@ export class WebSocketProxyHandler {
 
     try {
       const headers: Record<string, string> = {};
-      for (const key of [
-        "upgrade",
-        "connection",
-        "sec-websocket-key",
-        "sec-websocket-version",
-        "sec-websocket-protocol",
-        "sec-websocket-extensions",
-        "origin",
-      ]) {
+      // Forward all request headers except hop-by-hop headers
+      const hopByHopHeaders = new Set([
+        "host",
+        "transfer-encoding",
+        "trailer",
+        "te",
+        "keep-alive",
+        "proxy-authorization",
+        "proxy-authenticate",
+        "x-auth-claims", // stripped: only set server-side after auth
+      ]);
+      for (const key of Object.keys(req.headers)) {
+        if (hopByHopHeaders.has(key.toLowerCase())) continue;
         const value = req.headers[key];
         if (typeof value === "string") headers[key] = value;
       }
@@ -364,81 +369,95 @@ export class WebSocketProxyHandler {
       workerSocket.on("data", (chunk: Buffer) => {
         workerBuffer = Buffer.concat([workerBuffer, chunk]);
 
-        let frame: WebSocketFrame | null = null;
-        while ((frame = parseFrame(workerBuffer)) !== null) {
-          workerBuffer = workerBuffer.subarray(frame.totalLength);
+        try {
+          let frame: WebSocketFrame | null = null;
+          while ((frame = parseFrame(workerBuffer)) !== null) {
+            workerBuffer = workerBuffer.subarray(frame.totalLength);
 
-          switch (frame.opcode) {
-            case WebSocketOpcode.TEXT:
-            case WebSocketOpcode.BINARY:
-              if (!frame.fin) {
-                fragmentOpcode = frame.opcode;
-                fragmentBuffers = [frame.payload];
-              } else if (frame.opcode === WebSocketOpcode.TEXT) {
-                hostSocket.send(frame.payload.toString());
-              } else {
-                hostSocket.send(
-                  new Uint8Array(
-                    frame.payload.buffer,
-                    frame.payload.byteOffset,
-                    frame.payload.byteLength
-                  )
-                );
-              }
-              break;
-
-            case WebSocketOpcode.CONTINUATION:
-              fragmentBuffers.push(frame.payload);
-              if (frame.fin) {
-                const assembled = Buffer.concat(fragmentBuffers);
-                if (fragmentOpcode === WebSocketOpcode.TEXT)
-                  hostSocket.send(assembled.toString());
-                else
+            switch (frame.opcode) {
+              case WebSocketOpcode.TEXT:
+              case WebSocketOpcode.BINARY:
+                if (!frame.fin) {
+                  fragmentOpcode = frame.opcode;
+                  fragmentBuffers = [frame.payload];
+                } else if (frame.opcode === WebSocketOpcode.TEXT) {
+                  hostSocket.send(frame.payload.toString());
+                } else {
                   hostSocket.send(
-                    assembled.buffer.slice(
-                      assembled.byteOffset,
-                      assembled.byteOffset + assembled.byteLength
+                    new Uint8Array(
+                      frame.payload.buffer,
+                      frame.payload.byteOffset,
+                      frame.payload.byteLength
                     )
                   );
-                fragmentBuffers = [];
-                fragmentOpcode = null;
+                }
+                break;
+
+              case WebSocketOpcode.CONTINUATION:
+                fragmentBuffers.push(frame.payload);
+                if (frame.fin) {
+                  const assembled = Buffer.concat(fragmentBuffers);
+                  if (fragmentOpcode === WebSocketOpcode.TEXT)
+                    hostSocket.send(assembled.toString());
+                  else
+                    hostSocket.send(
+                      assembled.buffer.slice(
+                        assembled.byteOffset,
+                        assembled.byteOffset + assembled.byteLength
+                      )
+                    );
+                  fragmentBuffers = [];
+                  fragmentOpcode = null;
+                }
+                break;
+
+              case WebSocketOpcode.CLOSE: {
+                const { code, reason } = parseClosePayload(frame.payload);
+                hostSocket.close(code, reason);
+                cleanup(code, reason);
+                return;
               }
-              break;
 
-            case WebSocketOpcode.CLOSE: {
-              const { code, reason } = parseClosePayload(frame.payload);
-              hostSocket.close(code, reason);
-              cleanup(code, reason);
-              return;
+              case WebSocketOpcode.PING:
+                workerSocket.write(
+                  writeFrame(WebSocketOpcode.PONG, frame.payload, true, true)
+                );
+                break;
+
+              case WebSocketOpcode.PONG:
+                break;
             }
-
-            case WebSocketOpcode.PING:
-              workerSocket.write(
-                writeFrame(WebSocketOpcode.PONG, frame.payload)
-              );
-              break;
-
-            case WebSocketOpcode.PONG:
-              break;
           }
+        } catch (err) {
+          if (err instanceof WebSocketFrameError) {
+            hostSocket.close(err.closeCode, err.message);
+            cleanup(err.closeCode, err.message);
+            return;
+          }
+          throw err;
         }
       });
 
       hostSocket.onMessage((data) => {
         if (typeof data === "string")
           workerSocket.write(
-            writeFrame(WebSocketOpcode.TEXT, Buffer.from(data))
+            writeFrame(WebSocketOpcode.TEXT, Buffer.from(data), true, true)
           );
         else
           workerSocket.write(
-            writeFrame(WebSocketOpcode.BINARY, Buffer.from(data))
+            writeFrame(WebSocketOpcode.BINARY, Buffer.from(data), true, true)
           );
       });
 
       hostSocket.onClose((code, reason) => {
         if (!workerSocket.destroyed)
           workerSocket.write(
-            writeFrame(WebSocketOpcode.CLOSE, buildClosePayload(code, reason))
+            writeFrame(
+              WebSocketOpcode.CLOSE,
+              buildClosePayload(code, reason),
+              true,
+              true
+            )
           );
         cleanup(code, reason);
       });

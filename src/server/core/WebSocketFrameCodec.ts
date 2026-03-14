@@ -1,5 +1,17 @@
 // src/server/core/WebSocketFrameCodec.ts
 
+import { randomBytes } from "node:crypto";
+
+export class WebSocketFrameError extends Error {
+  constructor(
+    public readonly closeCode: number,
+    message: string
+  ) {
+    super(message);
+    this.name = "WebSocketFrameError";
+  }
+}
+
 export enum WebSocketOpcode {
   CONTINUATION = 0x0,
   TEXT = 0x1,
@@ -45,12 +57,17 @@ export function parseFrame(data: Buffer): WebSocketFrame | null {
   } else if (payloadLength === 127) {
     if (data.length < 10) return null;
     const len64 = data.readBigUInt64BE(2);
-    if (len64 > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    if (len64 > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new WebSocketFrameError(
+        1002,
+        "Frame length exceeds safe integer range"
+      );
     payloadLength = Number(len64);
     offset = 10;
   }
 
-  if (payloadLength > MAX_FRAME_PAYLOAD_SIZE) return null;
+  if (payloadLength > MAX_FRAME_PAYLOAD_SIZE)
+    throw new WebSocketFrameError(1009, "Frame payload exceeds maximum size");
 
   let maskKey: Buffer | null = null;
   if (masked) {
@@ -80,12 +97,13 @@ export function parseFrame(data: Buffer): WebSocketFrame | null {
 }
 
 /**
- * Write an unmasked WebSocket frame.
+ * Write a WebSocket frame, optionally masked (required for client-to-server per RFC 6455).
  */
 export function writeFrame(
   opcode: WebSocketOpcode,
   payload: Buffer,
-  fin = true
+  fin = true,
+  mask = false
 ): Buffer {
   const finBit = fin ? 0x80 : 0x00;
   const byte0 = finBit | opcode;
@@ -106,6 +124,16 @@ export function writeFrame(
     header[0] = byte0;
     header[1] = 127;
     header.writeBigUInt64BE(BigInt(payload.length), 2);
+  }
+
+  if (mask) {
+    header[1] = header[1]! | 0x80;
+    const maskKey = randomBytes(4);
+    const maskedPayload = Buffer.alloc(payload.length);
+    for (let i = 0; i < payload.length; i++) {
+      maskedPayload[i] = payload[i]! ^ maskKey[i % 4]!;
+    }
+    return Buffer.concat([header, maskKey, maskedPayload]);
   }
 
   return Buffer.concat([header, payload]);

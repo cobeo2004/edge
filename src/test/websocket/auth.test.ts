@@ -146,7 +146,7 @@ describe("WebSocket auth", { timeout: 30_000 }, () => {
     expect(result).toBe("public-ws");
   });
 
-  it("returns 404 for non-existent function even with auth enabled", async () => {
+  it("rejects WebSocket upgrade for non-existent function with 401 (auth runs before existence check)", async () => {
     server = new EdgeFunctionServer({
       functionsDir: FUNCTIONS_DIR,
       port: 0,

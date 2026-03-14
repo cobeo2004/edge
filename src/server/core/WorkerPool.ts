@@ -308,6 +308,7 @@ export class WorkerPool {
       onFunctionCold: this.#serverOptions.onFunctionCold,
       onFunctionReady: this.#serverOptions.onFunctionReady,
       onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
+      websocketKeepsAlive: this.#serverOptions.websocketKeepsAlive,
       onNeedSpawn: (fnName) => {
         // Health check detected we're below minWorkers — spawn replacement
         this.getOrCreate(fnName).catch((err) => {
