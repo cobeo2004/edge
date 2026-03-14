@@ -949,8 +949,8 @@ flowchart LR
 ### Integration with worker pool
 
 - New WebSocket upgrades route to the **least-loaded** worker instance (based on HTTP active requests).
-- When `websocketKeepsAlive` is `true` (default), the idle timeout is paused while WebSocket connections are active on a worker.
-- When `websocketKeepsAlive` is `false`, workers can be terminated with active connections — clients receive a close frame with code 1001 (Going Away).
+- When `websocketKeepsAlive` is `true` (default), the **idle timeout** is paused while WebSocket connections are active on a worker. Note: `websocketKeepsAlive` only affects idle timeout — it does not affect `workerMaxDuration`, which is enforced inside the Deno worker process independently of WebSocket state.
+- When `websocketKeepsAlive` is `false`, workers can be terminated via idle timeout even with active connections — clients receive a close frame with code 1001 (Going Away).
 - Workers at `maxWebSocketConnections` are skipped during routing; new instances are spawned up to `maxWorkers`.
 
 ### Graceful shutdown
@@ -1017,7 +1017,7 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `functionPermissions`      | `Record<string, string \| string[]>`                  | Per-function permission overrides (priority over function.json)                                 |
 | `permissionProfiles`       | `Record<string, string[]>`                            | Custom named permission profiles (merged with built-ins)                                        |
 | `maxWebSocketConnections`  | `number`                                              | Max WebSocket connections per worker instance (default: `100`)                                  |
-| `websocketKeepsAlive`      | `boolean`                                             | Active WebSocket connections prevent idle timeout (default: `true`)                             |
+| `websocketKeepsAlive`      | `boolean`                                             | Active WebSocket connections prevent idle timeout; does not affect `workerMaxDuration` (default: `true`) |
 | `onWebSocketConnect`       | `(functionName: string, connectionId: string) => void` | Called when a WebSocket connection is established                                              |
 | `onWebSocketClose`         | `(functionName: string, connectionId: string, code: number, reason: string) => void` | Called when a WebSocket connection is closed                    |
 | `onWebSocketError`         | `(functionName: string, connectionId: string, error: Error) => void` | Called when a WebSocket connection errors                                        |

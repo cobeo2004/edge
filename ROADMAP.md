@@ -139,7 +139,8 @@ WebSocket proxy support across all three server adapters:
 - Deno adapter: message relay via `Deno.upgradeWebSocket()`
 - `maxWebSocketConnections` per worker instance (default: 100)
 - `websocketKeepsAlive` option (default: true)
-- WebSocket connections count as active requests for load balancing
+- WebSocket connections are tracked separately from HTTP active requests; routing/load balancing is based on HTTP active request counts, and workers at `maxWebSocketConnections` capacity are skipped during routing
+- `websocketKeepsAlive` option controls whether active WebSocket connections prevent idle timeout
 - Lifecycle hooks: `onWebSocketConnect`, `onWebSocketClose`, `onWebSocketError`
 - Per-function configuration via `function.json`
 - Graceful shutdown sends 1001 (Going Away) to all active connections

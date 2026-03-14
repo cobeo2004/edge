@@ -134,7 +134,7 @@ Deno.serve((req) => {
 
 ### 6. Function Existence vs Auth Ordering
 
-When a WebSocket upgrade targets a non-existent function, the 404 check takes precedence over auth. The adapters already extract the function name and validate it's non-empty. The upgrade handlers in `EdgeFunctionServer` check function existence (via the worker pool) before running auth — this matches the HTTP path where routing happens before middleware, and avoids leaking auth requirements for functions that don't exist.
+Authentication runs **before** function existence checks for WebSocket upgrades. When a WebSocket upgrade targets a non-existent function and auth is enabled, the server returns 401 (not 404) if the request lacks valid credentials. This prevents function name enumeration — an unauthenticated caller cannot probe which functions exist by observing 404 vs 401 responses. Only after successful authentication does the server check whether the target function exists and return 404 if it does not.
 
 ## Files to Modify
 
@@ -161,7 +161,7 @@ When a WebSocket upgrade targets a non-existent function, the 404 check takes pr
 - `publicFunctions` entry → connection established without credentials
 - `function.json` `auth: false` → connection established without credentials
 - `onAuthFailure` callback fires for rejected WebSocket upgrades (Bun/Deno path)
-- WebSocket upgrade to non-existent function with auth → 404 (not 401)
+- WebSocket upgrade to non-existent function with auth (unauthenticated) → 401 (auth runs before existence check)
 - No auth configured + WebSocket upgrade → connection established (no regression)
 
 ### No regressions
