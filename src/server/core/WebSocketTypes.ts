@@ -24,14 +24,14 @@ export type NodeUpgradeHandler = (
   req: http.IncomingMessage,
   clientSocket: Duplex,
   head: Buffer,
-  functionName: string,
+  functionName: string
 ) => void;
 
 /** Bun/Deno relay upgrade handler */
 export type RelayUpgradeHandler = (
   functionName: string,
   hostSocket: HostWebSocket,
-  extraHeaders?: Record<string, string>,
+  extraHeaders?: Record<string, string>
 ) => void;
 
 /** Union type — adapters provide the appropriate variant */
@@ -44,12 +44,12 @@ export interface WebSocketHooks {
     functionName: string,
     connectionId: string,
     code: number,
-    reason: string,
+    reason: string
   ) => void;
   onWebSocketError?: (
     functionName: string,
     connectionId: string,
-    error: Error,
+    error: Error
   ) => void;
 }
 

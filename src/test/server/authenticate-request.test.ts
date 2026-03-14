@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { authenticateRequest } from "../../server/core/authenticateRequest.js";
-import type { AuthStrategy, AuthResult } from "../../auth/types.js";
+import type { AuthStrategy } from "../../auth/types.js";
 
 const validStrategy: AuthStrategy = {
   extractCredentials(request: Request) {
@@ -93,8 +93,12 @@ describe("authenticateRequest", () => {
 
   it("returns 401 when extractCredentials throws", async () => {
     const throwing: AuthStrategy = {
-      extractCredentials() { throw new Error("boom"); },
-      verify() { return Promise.resolve({ valid: true }); },
+      extractCredentials() {
+        throw new Error("boom");
+      },
+      verify() {
+        return Promise.resolve({ valid: true });
+      },
     };
     const result = await authenticateRequest({
       request: new Request("http://localhost/api"),
@@ -116,7 +120,9 @@ describe("authenticateRequest", () => {
       extractCredentials(req: Request) {
         return Promise.resolve(req.headers.get("authorization"));
       },
-      verify() { throw new Error("verify boom"); },
+      verify() {
+        throw new Error("verify boom");
+      },
     };
     const result = await authenticateRequest({
       request: new Request("http://localhost/api", {
@@ -141,7 +147,7 @@ describe("authenticateRequest", () => {
       auth: validStrategy,
       registry: makeRegistry(),
       publicFunctions: [],
-      onAuthFailure: (_req, error) =>
+      onAuthFailure: () =>
         new Response(JSON.stringify({ custom: true }), { status: 403 }),
     });
     expect(result.authenticated).toBe(false);

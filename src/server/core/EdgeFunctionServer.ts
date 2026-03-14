@@ -115,7 +115,7 @@ export class EdgeFunctionServer {
           req,
           clientSocket,
           head,
-          functionName,
+          functionName
         ) => {
           const authGate = this.#options.auth
             ? (async () => {
@@ -123,7 +123,10 @@ export class EdgeFunctionServer {
                 const headers = new Headers();
                 for (const [key, value] of Object.entries(req.headers)) {
                   if (value !== undefined) {
-                    headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+                    headers.set(
+                      key,
+                      Array.isArray(value) ? value.join(", ") : value
+                    );
                   }
                 }
                 const request = new Request(url, { method: "GET", headers });
@@ -139,7 +142,7 @@ export class EdgeFunctionServer {
                 if (!result.authenticated) {
                   const body = JSON.stringify({ error: "Unauthorized" });
                   clientSocket.write(
-                    `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+                    `HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`
                   );
                   clientSocket.destroy();
                   return;
@@ -147,7 +150,7 @@ export class EdgeFunctionServer {
 
                 if (result.claims) {
                   const encoded = Buffer.from(
-                    JSON.stringify(result.claims),
+                    JSON.stringify(result.claims)
                   ).toString("base64url");
                   req.headers["x-auth-claims"] = encoded;
                 }
@@ -168,14 +171,12 @@ export class EdgeFunctionServer {
                 head,
                 functionName,
                 socketPath,
-                instance.id,
+                instance.id
               );
             })
             .catch(() => {
               if (!clientSocket.destroyed) {
-                clientSocket.write(
-                  "HTTP/1.1 503 Service Unavailable\r\n\r\n",
-                );
+                clientSocket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
                 clientSocket.destroy();
               }
             });
@@ -186,10 +187,9 @@ export class EdgeFunctionServer {
         const relayHandler: RelayUpgradeHandler = (
           functionName: string,
           hostSocket: HostWebSocket,
-          extraHeaders?: Record<string, string>,
+          extraHeaders?: Record<string, string>
         ) => {
-          this.#pool!
-            .getOrCreate(functionName)
+          this.#pool!.getOrCreate(functionName)
             .then((instance) => {
               const socketPath = instance.worker.socketPath;
               return this.#wsProxyHandler.handleRelayUpgrade(
@@ -199,7 +199,7 @@ export class EdgeFunctionServer {
                 instance.id,
                 `ws://localhost/${functionName}`,
                 "localhost",
-                extraHeaders,
+                extraHeaders
               );
             })
             .catch(() => {
@@ -248,7 +248,11 @@ export class EdgeFunctionServer {
 
     // Close all WebSocket connections before terminating workers
     for (const name of this.listFunctions()) {
-      this.#wsProxyHandler.closeAllConnectionsForFunction(name, 1001, "Going Away");
+      this.#wsProxyHandler.closeAllConnectionsForFunction(
+        name,
+        1001,
+        "Going Away"
+      );
     }
 
     this.#pool?.stopAllHealthChecks();

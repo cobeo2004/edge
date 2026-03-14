@@ -16,7 +16,10 @@ declare const Bun: {
   serve(options: {
     port: number;
     hostname: string;
-    fetch: (req: Request, server: { upgrade(req: Request, options?: { data?: unknown }): boolean }) => Promise<Response> | Response;
+    fetch: (
+      req: Request,
+      server: { upgrade(req: Request, options?: { data?: unknown }): boolean }
+    ) => Promise<Response> | Response;
     websocket?: {
       open?: (ws: BunServerWebSocket) => void;
       message?: (ws: BunServerWebSocket, message: string | ArrayBuffer) => void;
@@ -32,9 +35,12 @@ class BunAdapterServer implements AdapterServer {
     | { port: number; stop(closeActiveConnections?: boolean): void }
     | undefined;
   #relayHandler?: RelayUpgradeHandler;
-  #authCheck?: (request: Request, functionName: string) => Promise<
-    { authenticated: true; claims?: Record<string, unknown> } |
-    { authenticated: false; response: Response }
+  #authCheck?: (
+    request: Request,
+    functionName: string
+  ) => Promise<
+    | { authenticated: true; claims?: Record<string, unknown> }
+    | { authenticated: false; response: Response }
   >;
   #wsHandlers = new Map<
     unknown,
@@ -53,10 +59,15 @@ class BunAdapterServer implements AdapterServer {
     this.#relayHandler = handler as RelayUpgradeHandler;
   }
 
-  setAuthCheck(check: (request: Request, functionName: string) => Promise<
-    { authenticated: true; claims?: Record<string, unknown> } |
-    { authenticated: false; response: Response }
-  >): void {
+  setAuthCheck(
+    check: (
+      request: Request,
+      functionName: string
+    ) => Promise<
+      | { authenticated: true; claims?: Record<string, unknown> }
+      | { authenticated: false; response: Response }
+    >
+  ): void {
     this.#authCheck = check;
   }
 
@@ -72,7 +83,10 @@ class BunAdapterServer implements AdapterServer {
       fetch: async (req, server) => {
         // Detect WebSocket upgrade requests
         const upgradeHeader = req.headers.get("upgrade");
-        if (upgradeHeader?.toLowerCase() === "websocket" && this.#relayHandler) {
+        if (
+          upgradeHeader?.toLowerCase() === "websocket" &&
+          this.#relayHandler
+        ) {
           const url = new URL(req.url);
           const functionName = url.pathname.split("/").filter(Boolean)[0] ?? "";
 
@@ -82,7 +96,11 @@ class BunAdapterServer implements AdapterServer {
               return authResult.response;
             }
             const extraHeaders = authResult.claims
-              ? { "x-auth-claims": Buffer.from(JSON.stringify(authResult.claims)).toString("base64url") }
+              ? {
+                  "x-auth-claims": Buffer.from(
+                    JSON.stringify(authResult.claims)
+                  ).toString("base64url"),
+                }
               : undefined;
             const upgraded = server.upgrade(req, {
               data: { functionName, extraHeaders },
@@ -100,8 +118,12 @@ class BunAdapterServer implements AdapterServer {
         return this.#handler(req);
       },
       websocket: {
-        open: (ws: BunServerWebSocket<{ functionName: string; extraHeaders?: Record<string, string> }>) => {
+        open: (ws: BunServerWebSocket) => {
           if (!this.#relayHandler) return;
+          const { functionName, extraHeaders } = ws.data as {
+            functionName: string;
+            extraHeaders?: Record<string, string>;
+          };
 
           const handlers: {
             messageHandler?: (data: string | ArrayBuffer) => void;
@@ -128,7 +150,7 @@ class BunAdapterServer implements AdapterServer {
             },
           };
 
-          this.#relayHandler(ws.data.functionName, hostSocket, ws.data.extraHeaders);
+          this.#relayHandler(functionName, hostSocket, extraHeaders);
         },
         message: (ws: BunServerWebSocket, message: string | ArrayBuffer) => {
           const handlers = this.#wsHandlers.get(ws);

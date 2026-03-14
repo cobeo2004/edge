@@ -8,7 +8,7 @@ import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
 const SECRET = "test-secret-that-is-long-enough-for-hs256!!!!!";
 
 function makeToken(
-  claims: Record<string, unknown> = { sub: "user-1" },
+  claims: Record<string, unknown> = { sub: "user-1" }
 ): Promise<string> {
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
@@ -35,14 +35,16 @@ describe("WebSocket auth", { timeout: 30_000 }, () => {
     await server.start();
 
     const ws = new WebSocket(`ws://localhost:${server.port}/websocket-echo`);
-    const error = await new Promise<{ statusCode: number }>((resolve, reject) => {
-      ws.on("unexpected-response", (_req, res) => {
-        resolve({ statusCode: res.statusCode! });
-        ws.close();
-      });
-      ws.on("error", () => {});
-      setTimeout(() => reject(new Error("timeout")), 10_000);
-    });
+    const error = await new Promise<{ statusCode: number }>(
+      (resolve, reject) => {
+        ws.on("unexpected-response", (_req, res) => {
+          resolve({ statusCode: res.statusCode! });
+          ws.close();
+        });
+        ws.on("error", () => {});
+        setTimeout(() => reject(new Error("timeout")), 10_000);
+      }
+    );
     expect(error.statusCode).toBe(401);
   });
 
@@ -57,14 +59,16 @@ describe("WebSocket auth", { timeout: 30_000 }, () => {
     const ws = new WebSocket(`ws://localhost:${server.port}/websocket-echo`, {
       headers: { authorization: "Bearer invalid-token" },
     });
-    const error = await new Promise<{ statusCode: number }>((resolve, reject) => {
-      ws.on("unexpected-response", (_req, res) => {
-        resolve({ statusCode: res.statusCode! });
-        ws.close();
-      });
-      ws.on("error", () => {});
-      setTimeout(() => reject(new Error("timeout")), 10_000);
-    });
+    const error = await new Promise<{ statusCode: number }>(
+      (resolve, reject) => {
+        ws.on("unexpected-response", (_req, res) => {
+          resolve({ statusCode: res.statusCode! });
+          ws.close();
+        });
+        ws.on("error", () => {});
+        setTimeout(() => reject(new Error("timeout")), 10_000);
+      }
+    );
     expect(error.statusCode).toBe(401);
   });
 
@@ -103,7 +107,7 @@ describe("WebSocket auth", { timeout: 30_000 }, () => {
     const token = await makeToken({ sub: "ws-user-42", role: "admin" });
     const ws = new WebSocket(
       `ws://localhost:${server.port}/websocket-auth-echo`,
-      { headers: { authorization: `Bearer ${token}` } },
+      { headers: { authorization: `Bearer ${token}` } }
     );
     const result = await new Promise<string>((resolve, reject) => {
       ws.on("open", () => ws.send("claims-test"));
@@ -151,14 +155,16 @@ describe("WebSocket auth", { timeout: 30_000 }, () => {
     await server.start();
 
     const ws = new WebSocket(`ws://localhost:${server.port}/nonexistent`);
-    const error = await new Promise<{ statusCode: number }>((resolve, reject) => {
-      ws.on("unexpected-response", (_req, res) => {
-        resolve({ statusCode: res.statusCode! });
-        ws.close();
-      });
-      ws.on("error", () => {});
-      setTimeout(() => reject(new Error("timeout")), 10_000);
-    });
+    const error = await new Promise<{ statusCode: number }>(
+      (resolve, reject) => {
+        ws.on("unexpected-response", (_req, res) => {
+          resolve({ statusCode: res.statusCode! });
+          ws.close();
+        });
+        ws.on("error", () => {});
+        setTimeout(() => reject(new Error("timeout")), 10_000);
+      }
+    );
     // Auth runs before function existence check (prevents function enumeration),
     // so unauthenticated requests to nonexistent functions get 401
     expect(error.statusCode).toBe(401);

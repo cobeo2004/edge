@@ -31,7 +31,7 @@ export class WebSocketProxyHandler {
   addConnection(
     functionName: string,
     workerInstanceId: string,
-    connectionId: string,
+    connectionId: string
   ): void {
     if (!this.#connections.has(functionName)) {
       this.#connections.set(functionName, new Map());
@@ -49,7 +49,7 @@ export class WebSocketProxyHandler {
     workerInstanceId: string,
     connectionId: string,
     code = 1005,
-    reason = "",
+    reason = ""
   ): void {
     const funcMap = this.#connections.get(functionName);
     if (!funcMap) return;
@@ -65,21 +65,27 @@ export class WebSocketProxyHandler {
     functionName: string,
     workerInstanceId: string,
     code: number,
-    reason: string,
+    reason: string
   ): void {
     const funcMap = this.#connections.get(functionName);
     if (!funcMap) return;
     const workerSet = funcMap.get(workerInstanceId);
     if (!workerSet) return;
     for (const connId of [...workerSet]) {
-      this.removeConnection(functionName, workerInstanceId, connId, code, reason);
+      this.removeConnection(
+        functionName,
+        workerInstanceId,
+        connId,
+        code,
+        reason
+      );
     }
   }
 
   closeAllConnectionsForFunction(
     functionName: string,
     code: number,
-    reason: string,
+    reason: string
   ): void {
     const funcMap = this.#connections.get(functionName);
     if (!funcMap) return;
@@ -88,28 +94,20 @@ export class WebSocketProxyHandler {
     }
   }
 
-  getConnectionCount(
-    functionName: string,
-    workerInstanceId: string,
-  ): number {
-    return this.#connections.get(functionName)?.get(workerInstanceId)?.size ?? 0;
+  getConnectionCount(functionName: string, workerInstanceId: string): number {
+    return (
+      this.#connections.get(functionName)?.get(workerInstanceId)?.size ?? 0
+    );
   }
 
-  canAcceptConnection(
-    functionName: string,
-    workerInstanceId: string,
-  ): boolean {
+  canAcceptConnection(functionName: string, workerInstanceId: string): boolean {
     return (
       this.getConnectionCount(functionName, workerInstanceId) <
       this.#options.maxWebSocketConnections
     );
   }
 
-  emitError(
-    functionName: string,
-    connectionId: string,
-    error: Error,
-  ): void {
+  emitError(functionName: string, connectionId: string, error: Error): void {
     this.#options.onWebSocketError?.(functionName, connectionId, error);
   }
 
@@ -117,8 +115,12 @@ export class WebSocketProxyHandler {
     socketPath: string,
     originalUrl: string,
     originalHost: string,
-    headers: Record<string, string>,
-  ): Promise<{ workerSocket: net.Socket; responseHead: Buffer; responseHeaders: Record<string, string> }> {
+    headers: Record<string, string>
+  ): Promise<{
+    workerSocket: net.Socket;
+    responseHead: Buffer;
+    responseHeaders: Record<string, string>;
+  }> {
     return new Promise((resolve, reject) => {
       const socket = net.connect({ path: socketPath }, () => {
         const headerLines = [
@@ -163,7 +165,11 @@ export class WebSocketProxyHandler {
             responseHeaders[key] = value;
           }
         }
-        resolve({ workerSocket: socket, responseHead: remaining, responseHeaders });
+        resolve({
+          workerSocket: socket,
+          responseHead: remaining,
+          responseHeaders,
+        });
       };
 
       socket.on("data", onData);
@@ -181,7 +187,7 @@ export class WebSocketProxyHandler {
     head: Buffer,
     functionName: string,
     socketPath: string,
-    workerInstanceId: string,
+    workerInstanceId: string
   ): Promise<void> {
     const connectionId = this.generateConnectionId();
 
@@ -204,12 +210,13 @@ export class WebSocketProxyHandler {
       const originalUrl = `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`;
       const originalHost = req.headers.host ?? "localhost";
 
-      const { workerSocket, responseHead, responseHeaders } = await this.upgradeToWorker(
-        socketPath,
-        originalUrl,
-        originalHost,
-        headers,
-      );
+      const { workerSocket, responseHead, responseHeaders } =
+        await this.upgradeToWorker(
+          socketPath,
+          originalUrl,
+          originalHost,
+          headers
+        );
 
       // Forward the worker's actual 101 response headers (including Sec-WebSocket-Accept)
       const headerLines = ["HTTP/1.1 101 Switching Protocols"];
@@ -218,7 +225,8 @@ export class WebSocketProxyHandler {
       }
       // Ensure minimum required headers are present
       if (!responseHeaders["upgrade"]) headerLines.push("Upgrade: websocket");
-      if (!responseHeaders["connection"]) headerLines.push("Connection: Upgrade");
+      if (!responseHeaders["connection"])
+        headerLines.push("Connection: Upgrade");
       clientSocket.write(headerLines.join("\r\n") + "\r\n\r\n");
 
       this.addConnection(functionName, workerInstanceId, connectionId);
@@ -238,7 +246,7 @@ export class WebSocketProxyHandler {
           workerInstanceId,
           connectionId,
           code,
-          reason,
+          reason
         );
         if (!clientSocket.destroyed) clientSocket.destroy();
         if (!workerSocket.destroyed) workerSocket.destroy();
@@ -270,7 +278,7 @@ export class WebSocketProxyHandler {
     workerInstanceId: string,
     originalUrl: string,
     originalHost: string,
-    extraHeaders?: Record<string, string>,
+    extraHeaders?: Record<string, string>
   ): Promise<void> {
     const connectionId = this.generateConnectionId();
 
@@ -283,12 +291,13 @@ export class WebSocketProxyHandler {
         ...extraHeaders,
       };
 
-      const { workerSocket, responseHead: initialData } = await this.upgradeToWorker(
-        socketPath,
-        originalUrl,
-        originalHost,
-        headers,
-      );
+      const { workerSocket, responseHead: initialData } =
+        await this.upgradeToWorker(
+          socketPath,
+          originalUrl,
+          originalHost,
+          headers
+        );
 
       this.addConnection(functionName, workerInstanceId, connectionId);
 
@@ -305,7 +314,7 @@ export class WebSocketProxyHandler {
           workerInstanceId,
           connectionId,
           code,
-          reason,
+          reason
         );
         if (!workerSocket.destroyed) workerSocket.destroy();
       };
@@ -329,8 +338,8 @@ export class WebSocketProxyHandler {
                 hostSocket.send(
                   frame.payload.buffer.slice(
                     frame.payload.byteOffset,
-                    frame.payload.byteOffset + frame.payload.byteLength,
-                  ),
+                    frame.payload.byteOffset + frame.payload.byteLength
+                  )
                 );
               }
               break;
@@ -345,8 +354,8 @@ export class WebSocketProxyHandler {
                   hostSocket.send(
                     assembled.buffer.slice(
                       assembled.byteOffset,
-                      assembled.byteOffset + assembled.byteLength,
-                    ),
+                      assembled.byteOffset + assembled.byteLength
+                    )
                   );
                 fragmentBuffers = [];
                 fragmentOpcode = null;
@@ -362,7 +371,7 @@ export class WebSocketProxyHandler {
 
             case WebSocketOpcode.PING:
               workerSocket.write(
-                writeFrame(WebSocketOpcode.PONG, frame.payload),
+                writeFrame(WebSocketOpcode.PONG, frame.payload)
               );
               break;
 
@@ -375,18 +384,18 @@ export class WebSocketProxyHandler {
       hostSocket.onMessage((data) => {
         if (typeof data === "string")
           workerSocket.write(
-            writeFrame(WebSocketOpcode.TEXT, Buffer.from(data)),
+            writeFrame(WebSocketOpcode.TEXT, Buffer.from(data))
           );
         else
           workerSocket.write(
-            writeFrame(WebSocketOpcode.BINARY, Buffer.from(data)),
+            writeFrame(WebSocketOpcode.BINARY, Buffer.from(data))
           );
       });
 
       hostSocket.onClose((code, reason) => {
         if (!workerSocket.destroyed)
           workerSocket.write(
-            writeFrame(WebSocketOpcode.CLOSE, buildClosePayload(code, reason)),
+            writeFrame(WebSocketOpcode.CLOSE, buildClosePayload(code, reason))
           );
         cleanup(code, reason);
       });

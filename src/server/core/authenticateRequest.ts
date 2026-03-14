@@ -19,14 +19,14 @@ export interface AuthenticateOptions {
   publicFunctions: string[];
   onAuthFailure?: (
     request: Request,
-    error: AuthResult,
+    error: AuthResult
   ) => Response | Promise<Response>;
 }
 
 function unauthorizedResponse(
   result: AuthResult,
   request: Request,
-  onAuthFailure?: AuthenticateOptions["onAuthFailure"],
+  onAuthFailure?: AuthenticateOptions["onAuthFailure"]
 ): Response | Promise<Response> {
   if (onAuthFailure) {
     return onAuthFailure(request, result);
@@ -39,14 +39,21 @@ function unauthorizedResponse(
     {
       status: 401,
       headers: { "Content-Type": "application/json" },
-    },
+    }
   );
 }
 
 export async function authenticateRequest(
-  options: AuthenticateOptions,
+  options: AuthenticateOptions
 ): Promise<AuthenticateResult> {
-  const { request, functionName, auth, registry, publicFunctions, onAuthFailure } = options;
+  const {
+    request,
+    functionName,
+    auth,
+    registry,
+    publicFunctions,
+    onAuthFailure,
+  } = options;
 
   const isPublic =
     publicFunctions.includes(functionName) ||
@@ -62,9 +69,13 @@ export async function authenticateRequest(
   } catch (err) {
     const result: AuthResult = {
       valid: false,
-      error: err instanceof Error ? err.message : "Credential extraction failed",
+      error:
+        err instanceof Error ? err.message : "Credential extraction failed",
     };
-    return { authenticated: false, response: await unauthorizedResponse(result, request, onAuthFailure) };
+    return {
+      authenticated: false,
+      response: await unauthorizedResponse(result, request, onAuthFailure),
+    };
   }
 
   if (!credentials) {
@@ -72,7 +83,10 @@ export async function authenticateRequest(
       valid: false,
       error: "No credentials provided",
     };
-    return { authenticated: false, response: await unauthorizedResponse(result, request, onAuthFailure) };
+    return {
+      authenticated: false,
+      response: await unauthorizedResponse(result, request, onAuthFailure),
+    };
   }
 
   let authResult: AuthResult;
@@ -86,7 +100,10 @@ export async function authenticateRequest(
   }
 
   if (!authResult.valid) {
-    return { authenticated: false, response: await unauthorizedResponse(authResult, request, onAuthFailure) };
+    return {
+      authenticated: false,
+      response: await unauthorizedResponse(authResult, request, onAuthFailure),
+    };
   }
 
   return { authenticated: true, claims: authResult.claims };
