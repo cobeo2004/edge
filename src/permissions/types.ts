@@ -16,6 +16,10 @@ export interface FunctionConfig {
   eagerSpawn?: boolean;
   /** Max WebSocket connections per worker instance (default: 100) */
   maxWebSocketConnections?: number;
-  /** Whether active WebSocket connections prevent idle timeout and workerMaxDuration from killing the worker (default: true) */
+  /**
+   * Whether active WebSocket connections should keep the worker from being treated as idle.
+   * This does not prevent workerMaxDuration-based recycling; workers may still be terminated
+   * when their maximum duration is reached (default: true).
+   */
   websocketKeepsAlive?: boolean;
 }
