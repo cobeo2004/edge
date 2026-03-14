@@ -98,4 +98,23 @@ export interface EdgeFunctionServerOptions {
   functionPermissions?: Record<string, string | string[]>;
   /** Custom named permission profiles (merged with built-ins) */
   permissionProfiles?: Record<string, string[]>;
+  /** Max WebSocket connections per worker instance (default: 100) */
+  maxWebSocketConnections?: number;
+  /** Whether active WebSocket connections prevent idle timeout and workerMaxDuration from killing the worker (default: true) */
+  websocketKeepsAlive?: boolean;
+  /** Called when a WebSocket connection is established */
+  onWebSocketConnect?: (functionName: string, connectionId: string) => void;
+  /** Called when a WebSocket connection is closed */
+  onWebSocketClose?: (
+    functionName: string,
+    connectionId: string,
+    code: number,
+    reason: string
+  ) => void;
+  /** Called when a WebSocket connection errors */
+  onWebSocketError?: (
+    functionName: string,
+    connectionId: string,
+    error: Error
+  ) => void;
 }

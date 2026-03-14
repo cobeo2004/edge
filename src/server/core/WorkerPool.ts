@@ -10,6 +10,7 @@ import { resolvePermissionFlags } from "../../permissions/profiles.js";
 import type { FunctionRegistry } from "./FunctionRegistry.js";
 import type { EdgeFunctionServerOptions } from "../utils/types.js";
 import { WorkerLifecycleManager } from "./WorkerLifecycleManager.js";
+import type { WebSocketProxyHandler } from "./WebSocketProxyHandler.js";
 import {
   createWorkerInstance,
   type WorkerInstance,
@@ -40,12 +41,17 @@ export class WorkerPool {
   #managers = new Map<string, WorkerLifecycleManager>();
   #workerPromises = new Map<string, Promise<WorkerInstance>>();
   #disposed = false;
+  #wsProxyHandler?: WebSocketProxyHandler;
 
   constructor(options: WorkerPoolOptions) {
     this.#registry = options.registry;
     this.#serverOptions = options.serverOptions;
     this.#envBase = options.envBase;
     this.#secretValues = options.secretValues;
+  }
+
+  setWebSocketProxyHandler(handler: WebSocketProxyHandler): void {
+    this.#wsProxyHandler = handler;
   }
 
   async getOrCreate(name: string): Promise<WorkerInstance> {
@@ -60,6 +66,13 @@ export class WorkerPool {
 
       switch (result.kind) {
         case "instance":
+          // Skip instances at WebSocket capacity — try to scale up or wait
+          if (
+            this.#wsProxyHandler &&
+            !this.#wsProxyHandler.canAcceptConnection(name, result.instance.id)
+          ) {
+            continue;
+          }
           return result.instance;
 
         case "spawn": {
@@ -188,6 +201,14 @@ export class WorkerPool {
     manager?.decrementActiveRequests(instanceId);
   }
 
+  incrementWebSocketCount(name: string, instanceId: string): void {
+    this.#managers.get(name)?.incrementWebSocketCount(instanceId);
+  }
+
+  decrementWebSocketCount(name: string, instanceId: string): void {
+    this.#managers.get(name)?.decrementWebSocketCount(instanceId);
+  }
+
   terminateAll(): void {
     this.#disposed = true;
     for (const manager of this.#managers.values()) {
@@ -287,6 +308,7 @@ export class WorkerPool {
       onFunctionCold: this.#serverOptions.onFunctionCold,
       onFunctionReady: this.#serverOptions.onFunctionReady,
       onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
+      websocketKeepsAlive: this.#serverOptions.websocketKeepsAlive,
       onNeedSpawn: (fnName) => {
         // Health check detected we're below minWorkers — spawn replacement
         this.getOrCreate(fnName).catch((err) => {

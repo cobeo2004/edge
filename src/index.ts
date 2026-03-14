@@ -29,6 +29,21 @@ export { parseEnvFile, loadEnvFile, createSecretMasker } from "./env/index.js";
 export type { AuthResult, AuthStrategy } from "./auth/index.js";
 export { JWTStrategy, type JWTStrategyOptions } from "./auth/index.js";
 
+export {
+  authenticateRequest,
+  type AuthenticateOptions,
+  type AuthenticateResult,
+} from "./server/core/authenticateRequest.js";
+
+export { WebSocketProxyHandler } from "./server/core/WebSocketProxyHandler.js";
+export type {
+  WebSocketConnection,
+  HostWebSocket,
+  WebSocketHooks,
+  WebSocketConfig,
+  WebSocketUpgradeHandler,
+} from "./server/core/WebSocketTypes.js";
+
 export type { FunctionConfig } from "./permissions/index.js";
 export {
   BUILT_IN_PROFILES,

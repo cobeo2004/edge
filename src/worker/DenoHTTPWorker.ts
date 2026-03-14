@@ -28,6 +28,8 @@ export interface DenoHTTPWorker {
     callback: (response: http.IncomingMessage) => void
   ): http.ClientRequest;
 
+  get socketPath(): string;
+
   get stdout(): Readable;
 
   get stderr(): Readable;
@@ -161,6 +163,10 @@ export class DenoHTTPWorkerImpl {
       req.on("error", reject);
       req.end();
     });
+  }
+
+  get socketPath(): string {
+    return this.#socketFile;
   }
 
   get stdout() {

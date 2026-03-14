@@ -16,6 +16,7 @@ export interface WorkerLifecycleManagerOptions {
     timeout: number;
     maxFailures: number;
   };
+  websocketKeepsAlive?: boolean;
   onFunctionCold?: (name: string) => void;
   onFunctionReady?: (name: string) => void;
   onWorkerUnhealthy?: (name: string, failures: number) => void;
@@ -41,6 +42,8 @@ export class WorkerLifecycleManager {
   #restartCount = 0;
   #readyFired = false;
   #generation = 0;
+  #wsConnectionCounts: Map<string, number> = new Map();
+  #websocketKeepsAlive: boolean;
 
   constructor(options: WorkerLifecycleManagerOptions) {
     this.#functionName = options.functionName;
@@ -48,6 +51,7 @@ export class WorkerLifecycleManager {
     this.#maxWorkers = options.maxWorkers;
     this.#idleTimeout = options.idleTimeout;
     this.#healthCheckConfig = options.healthCheckConfig;
+    this.#websocketKeepsAlive = options.websocketKeepsAlive ?? true;
     this.#options = options;
   }
 
@@ -235,6 +239,10 @@ export class WorkerLifecycleManager {
 
   #startIdleTimer(instance: WorkerInstance): void {
     if (this.#idleTimeout === undefined || this.#idleTimeout <= 0) return;
+    // Don't start idle timer if WebSocket connections are keeping the worker alive
+    if (this.#websocketKeepsAlive && this.getWebSocketCount(instance.id) > 0) {
+      return;
+    }
     this.#clearIdleTimer(instance);
 
     instance.idleTimer = setTimeout(() => {
@@ -394,6 +402,37 @@ export class WorkerLifecycleManager {
     }
   }
 
+  // --- WebSocket connection tracking ---
+
+  incrementWebSocketCount(instanceId: string): void {
+    const current = this.#wsConnectionCounts.get(instanceId) ?? 0;
+    this.#wsConnectionCounts.set(instanceId, current + 1);
+
+    if (this.#websocketKeepsAlive) {
+      const instance = this.#findInstance(instanceId);
+      if (instance) {
+        this.#clearIdleTimer(instance);
+      }
+    }
+  }
+
+  decrementWebSocketCount(instanceId: string): void {
+    const current = this.#wsConnectionCounts.get(instanceId) ?? 0;
+    const next = Math.max(0, current - 1);
+    this.#wsConnectionCounts.set(instanceId, next);
+
+    if (this.#websocketKeepsAlive && next === 0) {
+      const instance = this.#findInstance(instanceId);
+      if (instance && instance.activeRequests === 0) {
+        this.#startIdleTimer(instance);
+      }
+    }
+  }
+
+  getWebSocketCount(instanceId: string): number {
+    return this.#wsConnectionCounts.get(instanceId) ?? 0;
+  }
+
   // --- Stats ---
 
   getStats(): PoolStats {
@@ -434,6 +473,7 @@ export class WorkerLifecycleManager {
     const resolvers = this.#spawnResolvers;
     this.#spawnResolvers = [];
     this.#spawningCount = 0;
+    this.#wsConnectionCounts.clear();
     for (const resolve of resolvers) {
       resolve();
     }
