@@ -118,7 +118,7 @@ export class WebSocketProxyHandler {
     originalUrl: string,
     originalHost: string,
     headers: Record<string, string>,
-  ): Promise<{ workerSocket: net.Socket; responseHead: Buffer }> {
+  ): Promise<{ workerSocket: net.Socket; responseHead: Buffer; responseHeaders: Record<string, string> }> {
     return new Promise((resolve, reject) => {
       const socket = net.connect({ path: socketPath }, () => {
         const headerLines = [
@@ -152,7 +152,18 @@ export class WebSocketProxyHandler {
         }
 
         const remaining = responseBuffer.subarray(headerEnd + 4);
-        resolve({ workerSocket: socket, responseHead: remaining });
+        // Parse response headers from the worker so they can be forwarded
+        const responseHeaders: Record<string, string> = {};
+        const lines = headerStr.split("\r\n");
+        for (let i = 1; i < lines.length; i++) {
+          const colonIdx = lines[i].indexOf(":");
+          if (colonIdx > 0) {
+            const key = lines[i].substring(0, colonIdx).trim().toLowerCase();
+            const value = lines[i].substring(colonIdx + 1).trim();
+            responseHeaders[key] = value;
+          }
+        }
+        resolve({ workerSocket: socket, responseHead: remaining, responseHeaders });
       };
 
       socket.on("data", onData);
@@ -192,16 +203,22 @@ export class WebSocketProxyHandler {
       const originalUrl = `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`;
       const originalHost = req.headers.host ?? "localhost";
 
-      const { workerSocket, responseHead } = await this.upgradeToWorker(
+      const { workerSocket, responseHead, responseHeaders } = await this.upgradeToWorker(
         socketPath,
         originalUrl,
         originalHost,
         headers,
       );
 
-      clientSocket.write(
-        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
-      );
+      // Forward the worker's actual 101 response headers (including Sec-WebSocket-Accept)
+      const headerLines = ["HTTP/1.1 101 Switching Protocols"];
+      for (const [key, value] of Object.entries(responseHeaders)) {
+        headerLines.push(`${key}: ${value}`);
+      }
+      // Ensure minimum required headers are present
+      if (!responseHeaders["upgrade"]) headerLines.push("Upgrade: websocket");
+      if (!responseHeaders["connection"]) headerLines.push("Connection: Upgrade");
+      clientSocket.write(headerLines.join("\r\n") + "\r\n\r\n");
 
       this.addConnection(functionName, workerInstanceId, connectionId);
 
@@ -263,7 +280,7 @@ export class WebSocketProxyHandler {
         "sec-websocket-version": "13",
       };
 
-      const { workerSocket, responseHead } = await this.upgradeToWorker(
+      const { workerSocket, responseHead: initialData } = await this.upgradeToWorker(
         socketPath,
         originalUrl,
         originalHost,
@@ -272,7 +289,7 @@ export class WebSocketProxyHandler {
 
       this.addConnection(functionName, workerInstanceId, connectionId);
 
-      let workerBuffer = responseHead;
+      let workerBuffer = initialData;
       let cleaned = false;
       let fragmentBuffers: Buffer[] = [];
       let fragmentOpcode: WebSocketOpcode | null = null;
