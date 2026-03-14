@@ -9,6 +9,9 @@ export enum WebSocketOpcode {
   PONG = 0xa,
 }
 
+/** Maximum WebSocket frame payload size (16 MiB). Prevents OOM from malicious frames. */
+export const MAX_FRAME_PAYLOAD_SIZE = 16 * 1024 * 1024;
+
 export interface WebSocketFrame {
   fin: boolean;
   opcode: WebSocketOpcode;
@@ -42,9 +45,12 @@ export function parseFrame(data: Buffer): WebSocketFrame | null {
   } else if (payloadLength === 127) {
     if (data.length < 10) return null;
     const len64 = data.readBigUInt64BE(2);
+    if (len64 > BigInt(Number.MAX_SAFE_INTEGER)) return null;
     payloadLength = Number(len64);
     offset = 10;
   }
+
+  if (payloadLength > MAX_FRAME_PAYLOAD_SIZE) return null;
 
   let maskKey: Buffer | null = null;
   if (masked) {

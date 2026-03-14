@@ -201,6 +201,14 @@ export class WorkerPool {
     manager?.decrementActiveRequests(instanceId);
   }
 
+  incrementWebSocketCount(name: string, instanceId: string): void {
+    this.#managers.get(name)?.incrementWebSocketCount(instanceId);
+  }
+
+  decrementWebSocketCount(name: string, instanceId: string): void {
+    this.#managers.get(name)?.decrementWebSocketCount(instanceId);
+  }
+
   terminateAll(): void {
     this.#disposed = true;
     for (const manager of this.#managers.values()) {

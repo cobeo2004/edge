@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import net from "node:net";
 import type http from "node:http";
 import type { Duplex } from "node:stream";
@@ -20,9 +20,30 @@ export class WebSocketProxyHandler {
   readonly #options: WebSocketProxyHandlerOptions;
   // functionName -> workerInstanceId -> Set<connectionId>
   readonly #connections = new Map<string, Map<string, Set<string>>>();
+  // connectionId -> cleanup callback that tears down actual sockets
+  readonly #cleanupCallbacks = new Map<
+    string,
+    (code: number, reason: string) => void
+  >();
+  #onConnectionAdded?: (functionName: string, workerInstanceId: string) => void;
+  #onConnectionRemoved?: (
+    functionName: string,
+    workerInstanceId: string
+  ) => void;
 
   constructor(options: WebSocketProxyHandlerOptions) {
     this.#options = options;
+  }
+
+  setLifecycleHooks(hooks: {
+    onConnectionAdded: (functionName: string, workerInstanceId: string) => void;
+    onConnectionRemoved: (
+      functionName: string,
+      workerInstanceId: string
+    ) => void;
+  }): void {
+    this.#onConnectionAdded = hooks.onConnectionAdded;
+    this.#onConnectionRemoved = hooks.onConnectionRemoved;
   }
 
   generateConnectionId(): string {
@@ -42,6 +63,7 @@ export class WebSocketProxyHandler {
       funcMap.set(workerInstanceId, new Set());
     }
     funcMap.get(workerInstanceId)!.add(connectionId);
+    this.#onConnectionAdded?.(functionName, workerInstanceId);
     this.#options.onWebSocketConnect?.(functionName, connectionId);
   }
 
@@ -59,6 +81,12 @@ export class WebSocketProxyHandler {
     workerSet.delete(connectionId);
     if (workerSet.size === 0) funcMap.delete(workerInstanceId);
     if (funcMap.size === 0) this.#connections.delete(functionName);
+    const cb = this.#cleanupCallbacks.get(connectionId);
+    if (cb) {
+      this.#cleanupCallbacks.delete(connectionId);
+      cb(code, reason);
+    }
+    this.#onConnectionRemoved?.(functionName, workerInstanceId);
     this.#options.onWebSocketClose?.(functionName, connectionId, code, reason);
   }
 
@@ -124,8 +152,10 @@ export class WebSocketProxyHandler {
   }> {
     return new Promise((resolve, reject) => {
       const socket = net.connect({ path: socketPath }, () => {
+        const parsedUrl = new URL(originalUrl);
+        const requestPath = parsedUrl.pathname + parsedUrl.search;
         const headerLines = [
-          "GET / HTTP/1.1",
+          `GET ${requestPath} HTTP/1.1`,
           "Host: localhost",
           `X-Deno-Worker-URL: ${originalUrl}`,
           `X-Deno-Worker-Host: ${originalHost}`,
@@ -167,6 +197,7 @@ export class WebSocketProxyHandler {
             responseHeaders[key] = value;
           }
         }
+        socket.setTimeout(0);
         resolve({
           workerSocket: socket,
           responseHead: remaining,
@@ -189,7 +220,8 @@ export class WebSocketProxyHandler {
     head: Buffer,
     functionName: string,
     socketPath: string,
-    workerInstanceId: string
+    workerInstanceId: string,
+    extraHeaders?: Record<string, string>
   ): Promise<void> {
     const connectionId = this.generateConnectionId();
 
@@ -203,10 +235,12 @@ export class WebSocketProxyHandler {
         "sec-websocket-protocol",
         "sec-websocket-extensions",
         "origin",
-        "x-auth-claims",
       ]) {
         const value = req.headers[key];
         if (typeof value === "string") headers[key] = value;
+      }
+      if (extraHeaders) {
+        Object.assign(headers, extraHeaders);
       }
 
       const originalUrl = `http://${req.headers.host ?? "localhost"}${
@@ -233,6 +267,10 @@ export class WebSocketProxyHandler {
       clientSocket.write(`${headerLines.join("\r\n")}\r\n\r\n`);
 
       this.addConnection(functionName, workerInstanceId, connectionId);
+      this.#cleanupCallbacks.set(connectionId, (_code, _reason) => {
+        if (!clientSocket.destroyed) clientSocket.destroy();
+        if (!workerSocket.destroyed) workerSocket.destroy();
+      });
 
       if (head.length > 0) workerSocket.write(head);
       if (responseHead.length > 0) clientSocket.write(responseHead);
@@ -251,8 +289,6 @@ export class WebSocketProxyHandler {
           code,
           reason
         );
-        if (!clientSocket.destroyed) clientSocket.destroy();
-        if (!workerSocket.destroyed) workerSocket.destroy();
       };
 
       clientSocket.on("close", () => cleanup(1006, "Client closed"));
@@ -289,7 +325,7 @@ export class WebSocketProxyHandler {
       const headers: Record<string, string> = {
         upgrade: "websocket",
         connection: "Upgrade",
-        "sec-websocket-key": Buffer.from(randomUUID()).toString("base64"),
+        "sec-websocket-key": randomBytes(16).toString("base64"),
         "sec-websocket-version": "13",
         ...extraHeaders,
       };
@@ -303,6 +339,10 @@ export class WebSocketProxyHandler {
         );
 
       this.addConnection(functionName, workerInstanceId, connectionId);
+      this.#cleanupCallbacks.set(connectionId, (code, reason) => {
+        hostSocket.close(code, reason);
+        if (!workerSocket.destroyed) workerSocket.destroy();
+      });
 
       let workerBuffer = initialData;
       let cleaned = false;
@@ -319,7 +359,6 @@ export class WebSocketProxyHandler {
           code,
           reason
         );
-        if (!workerSocket.destroyed) workerSocket.destroy();
       };
 
       workerSocket.on("data", (chunk: Buffer) => {

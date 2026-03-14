@@ -60,6 +60,14 @@ export class EdgeFunctionServer {
       secretValues,
     });
     this.#pool.setWebSocketProxyHandler(this.#wsProxyHandler);
+    this.#wsProxyHandler.setLifecycleHooks({
+      onConnectionAdded: (functionName, workerInstanceId) => {
+        this.#pool!.incrementWebSocketCount(functionName, workerInstanceId);
+      },
+      onConnectionRemoved: (functionName, workerInstanceId) => {
+        this.#pool!.decrementWebSocketCount(functionName, workerInstanceId);
+      },
+    });
 
     this.#requestHandler = new WorkerRequestHandler(this.#pool, {
       onFunctionError: this.#options.onFunctionError,
@@ -117,6 +125,8 @@ export class EdgeFunctionServer {
           head,
           functionName
         ) => {
+          delete req.headers["x-auth-claims"];
+          let authClaims: string | undefined;
           const authGate = this.#options.auth
             ? (async () => {
                 const url = `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`;
@@ -152,7 +162,7 @@ export class EdgeFunctionServer {
                   const encoded = Buffer.from(
                     JSON.stringify(result.claims)
                   ).toString("base64url");
-                  req.headers["x-auth-claims"] = encoded;
+                  authClaims = encoded;
                 }
               })()
             : Promise.resolve();
@@ -160,18 +170,29 @@ export class EdgeFunctionServer {
           authGate
             .then(() => {
               if (clientSocket.destroyed) return;
+              if (!this.#registry.hasFunction(functionName)) {
+                const body = JSON.stringify({ error: "Function not found" });
+                clientSocket.write(
+                  `HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`
+                );
+                clientSocket.destroy();
+                return;
+              }
               return this.#pool!.getOrCreate(functionName);
             })
             .then((instance) => {
               if (!instance) return;
               const socketPath = instance.worker.socketPath;
+              const extraHeaders: Record<string, string> | undefined =
+                authClaims ? { "x-auth-claims": authClaims } : undefined;
               return this.#wsProxyHandler.handleRawUpgrade(
                 req,
                 clientSocket,
                 head,
                 functionName,
                 socketPath,
-                instance.id
+                instance.id,
+                extraHeaders
               );
             })
             .catch(() => {

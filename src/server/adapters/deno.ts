@@ -97,7 +97,10 @@ class DenoAdapterServer implements AdapterServer {
     this.#server = Deno.serve(
       { port, hostname, onListen: () => {} },
       async (req) => {
-        if (this.#relayHandler && req.headers.get("upgrade") === "websocket") {
+        if (
+          this.#relayHandler &&
+          req.headers.get("upgrade")?.toLowerCase() === "websocket"
+        ) {
           const url = new URL(req.url);
           const functionName = url.pathname.split("/")[1] ?? "";
           if (!functionName) {

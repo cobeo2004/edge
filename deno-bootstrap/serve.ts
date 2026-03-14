@@ -69,7 +69,7 @@ const server = originalServe.call(Deno, {
       return Response.json({ warming: true }, { status: 200 });
     }
 
-    const isUpgrade = req.headers.get("upgrade") === "websocket";
+    const isUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
 
     if (isUpgrade) {
       // WebSocket upgrade: pass original request directly to preserve
