@@ -195,6 +195,7 @@ export class WebSocketProxyHandler {
         "sec-websocket-protocol",
         "sec-websocket-extensions",
         "origin",
+        "x-auth-claims",
       ]) {
         const value = req.headers[key];
         if (typeof value === "string") headers[key] = value;
