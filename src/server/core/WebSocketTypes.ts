@@ -31,6 +31,7 @@ export type NodeUpgradeHandler = (
 export type RelayUpgradeHandler = (
   functionName: string,
   hostSocket: HostWebSocket,
+  extraHeaders?: Record<string, string>,
 ) => void;
 
 /** Union type — adapters provide the appropriate variant */

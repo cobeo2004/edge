@@ -269,6 +269,7 @@ export class WebSocketProxyHandler {
     workerInstanceId: string,
     originalUrl: string,
     originalHost: string,
+    extraHeaders?: Record<string, string>,
   ): Promise<void> {
     const connectionId = this.generateConnectionId();
 
@@ -278,6 +279,7 @@ export class WebSocketProxyHandler {
         connection: "Upgrade",
         "sec-websocket-key": Buffer.from(randomUUID()).toString("base64"),
         "sec-websocket-version": "13",
+        ...extraHeaders,
       };
 
       const { workerSocket, responseHead: initialData } = await this.upgradeToWorker(
