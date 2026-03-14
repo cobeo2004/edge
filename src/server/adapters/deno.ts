@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import type { ServerAdapter, AdapterServer, RequestHandler } from "./types.js";
 import type {
   RelayUpgradeHandler,
@@ -41,6 +42,10 @@ class DenoAdapterServer implements AdapterServer {
   #server: { addr: { port: number }; shutdown(): Promise<void> } | undefined;
   readonly supportsRawUpgrade = false as const;
   #relayHandler?: RelayUpgradeHandler;
+  #authCheck?: (request: Request, functionName: string) => Promise<
+    { authenticated: true; claims?: Record<string, unknown> } |
+    { authenticated: false; response: Response }
+  >;
 
   constructor(handler: RequestHandler) {
     this.#handler = handler;
@@ -50,47 +55,59 @@ class DenoAdapterServer implements AdapterServer {
     this.#relayHandler = handler as RelayUpgradeHandler;
   }
 
+  setAuthCheck(check: (request: Request, functionName: string) => Promise<
+    { authenticated: true; claims?: Record<string, unknown> } |
+    { authenticated: false; response: Response }
+  >): void {
+    this.#authCheck = check;
+  }
+
   get port(): number {
     if (!this.#server) throw new Error("Server is not listening");
     return this.#server.addr.port;
   }
 
   async listen(port: number, hostname: string): Promise<void> {
-    this.#server = Deno.serve({ port, hostname, onListen: () => {} }, (req) => {
+    const buildHostSocket = (socket: any): HostWebSocket => ({
+      send: (data) => { if (socket.readyState === 1) socket.send(data); },
+      close: (code, reason) => { if (socket.readyState === 1) socket.close(code, reason); },
+      onMessage: (handler) => { socket.onmessage = (e: MessageEvent) => handler(e.data); },
+      onClose: (handler) => { socket.onclose = (e: CloseEvent) => handler(e.code, e.reason); },
+      onError: (handler) => { socket.onerror = () => handler(new Error("WebSocket error")); },
+    });
+
+    this.#server = Deno.serve({ port, hostname, onListen: () => {} }, async (req) => {
       if (this.#relayHandler && req.headers.get("upgrade") === "websocket") {
         const url = new URL(req.url);
         const functionName = url.pathname.split("/")[1] ?? "";
         if (!functionName) {
           return new Response("Not Found", { status: 404 });
         }
+
+        if (this.#authCheck) {
+          const authResult = await this.#authCheck(req, functionName);
+          if (!authResult.authenticated) {
+            return authResult.response;
+          }
+          const extraHeaders = authResult.claims
+            ? { "x-auth-claims": Buffer.from(JSON.stringify(authResult.claims)).toString("base64url") }
+            : undefined;
+
+          const { socket, response } = Deno.upgradeWebSocket(req);
+          const relayHandler = this.#relayHandler;
+          const hostSocket = buildHostSocket(socket);
+          socket.onopen = () => {
+            relayHandler(functionName, hostSocket, extraHeaders);
+          };
+          return response;
+        }
+
         const { socket, response } = Deno.upgradeWebSocket(req);
         const relayHandler = this.#relayHandler;
-
-        const hostSocket: HostWebSocket = {
-          send: (data) => {
-            if (socket.readyState === 1) {
-              if (typeof data === "string") socket.send(data);
-              else socket.send(data);
-            }
-          },
-          close: (code, reason) => {
-            if (socket.readyState === 1) socket.close(code, reason);
-          },
-          onMessage: (handler) => {
-            socket.onmessage = (e: MessageEvent) => handler(e.data);
-          },
-          onClose: (handler) => {
-            socket.onclose = (e: CloseEvent) => handler(e.code, e.reason);
-          },
-          onError: (handler) => {
-            socket.onerror = () => handler(new Error("WebSocket error"));
-          },
-        };
-
+        const hostSocket = buildHostSocket(socket);
         socket.onopen = () => {
           relayHandler(functionName, hostSocket);
         };
-
         return response;
       }
 
