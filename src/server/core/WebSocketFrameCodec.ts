@@ -79,7 +79,7 @@ export function parseFrame(data: Buffer): WebSocketFrame | null {
 export function writeFrame(
   opcode: WebSocketOpcode,
   payload: Buffer,
-  fin = true,
+  fin = true
 ): Buffer {
   const finBit = fin ? 0x80 : 0x00;
   const byte0 = finBit | opcode;
