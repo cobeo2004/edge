@@ -9,7 +9,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const WEBSOCKET_ECHO = pathToFileURL(
-  path.join(FUNCTIONS_DIR, "websocket-echo", "index.ts"),
+  path.join(FUNCTIONS_DIR, "websocket-echo", "index.ts")
 ).href;
 
 describe("Bootstrap WebSocket passthrough", () => {
@@ -22,13 +22,10 @@ describe("Bootstrap WebSocket passthrough", () => {
   });
 
   it("should pass WebSocket upgrade through to the user handler", async () => {
-    worker = await newDenoHTTPWorker(
-      `import "${WEBSOCKET_ECHO}"`,
-      {
-        runFlags: ["--allow-all"],
-        denoBootstrapScriptPath: SERVE_BOOTSTRAP,
-      },
-    );
+    worker = await newDenoHTTPWorker(`import "${WEBSOCKET_ECHO}"`, {
+      runFlags: ["--allow-all"],
+      denoBootstrapScriptPath: SERVE_BOOTSTRAP,
+    });
 
     const key = crypto.randomBytes(16).toString("base64");
     const socketPath = worker.socketPath;

@@ -19,7 +19,7 @@ function makeRegistry(configs: Record<string, { auth?: boolean }> = {}) {
     getFunctionConfig(name: string) {
       return configs[name] ?? undefined;
     },
-  } as any;
+  };
 }
 
 describe("authenticateRequest", () => {

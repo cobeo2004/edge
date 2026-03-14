@@ -105,7 +105,16 @@ export interface EdgeFunctionServerOptions {
   /** Called when a WebSocket connection is established */
   onWebSocketConnect?: (functionName: string, connectionId: string) => void;
   /** Called when a WebSocket connection is closed */
-  onWebSocketClose?: (functionName: string, connectionId: string, code: number, reason: string) => void;
+  onWebSocketClose?: (
+    functionName: string,
+    connectionId: string,
+    code: number,
+    reason: string
+  ) => void;
   /** Called when a WebSocket connection errors */
-  onWebSocketError?: (functionName: string, connectionId: string, error: Error) => void;
+  onWebSocketError?: (
+    functionName: string,
+    connectionId: string,
+    error: Error
+  ) => void;
 }

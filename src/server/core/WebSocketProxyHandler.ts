@@ -9,6 +9,7 @@ import {
   WebSocketOpcode,
   buildClosePayload,
   parseClosePayload,
+  type WebSocketFrame,
 } from "./WebSocketFrameCodec.js";
 
 export interface WebSocketProxyHandlerOptions extends WebSocketHooks {
@@ -133,7 +134,7 @@ export class WebSocketProxyHandler {
         for (const [key, value] of Object.entries(headers)) {
           headerLines.push(`${key}: ${value}`);
         }
-        socket.write(headerLines.join("\r\n") + "\r\n\r\n");
+        socket.write(`${headerLines.join("\r\n")}\r\n\r\n`);
       });
 
       let responseBuffer = Buffer.alloc(0);
@@ -158,10 +159,11 @@ export class WebSocketProxyHandler {
         const responseHeaders: Record<string, string> = {};
         const lines = headerStr.split("\r\n");
         for (let i = 1; i < lines.length; i++) {
-          const colonIdx = lines[i].indexOf(":");
+          const colonIdx = lines[i]?.indexOf(":") ?? -1;
           if (colonIdx > 0) {
-            const key = lines[i].substring(0, colonIdx).trim().toLowerCase();
-            const value = lines[i].substring(colonIdx + 1).trim();
+            const key =
+              lines[i]?.substring(0, colonIdx).trim().toLowerCase() ?? "";
+            const value = lines[i]?.substring(colonIdx + 1).trim() ?? "";
             responseHeaders[key] = value;
           }
         }
@@ -207,7 +209,9 @@ export class WebSocketProxyHandler {
         if (typeof value === "string") headers[key] = value;
       }
 
-      const originalUrl = `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`;
+      const originalUrl = `http://${req.headers.host ?? "localhost"}${
+        req.url ?? "/"
+      }`;
       const originalHost = req.headers.host ?? "localhost";
 
       const { workerSocket, responseHead, responseHeaders } =
@@ -224,10 +228,9 @@ export class WebSocketProxyHandler {
         headerLines.push(`${key}: ${value}`);
       }
       // Ensure minimum required headers are present
-      if (!responseHeaders["upgrade"]) headerLines.push("Upgrade: websocket");
-      if (!responseHeaders["connection"])
-        headerLines.push("Connection: Upgrade");
-      clientSocket.write(headerLines.join("\r\n") + "\r\n\r\n");
+      if (!responseHeaders.upgrade) headerLines.push("Upgrade: websocket");
+      if (!responseHeaders.connection) headerLines.push("Connection: Upgrade");
+      clientSocket.write(`${headerLines.join("\r\n")}\r\n\r\n`);
 
       this.addConnection(functionName, workerInstanceId, connectionId);
 
@@ -322,7 +325,7 @@ export class WebSocketProxyHandler {
       workerSocket.on("data", (chunk: Buffer) => {
         workerBuffer = Buffer.concat([workerBuffer, chunk]);
 
-        let frame;
+        let frame: WebSocketFrame | null = null;
         while ((frame = parseFrame(workerBuffer)) !== null) {
           workerBuffer = workerBuffer.subarray(frame.totalLength);
 

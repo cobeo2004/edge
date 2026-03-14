@@ -3,6 +3,7 @@ import { EdgeFunctionServer } from "../../server/core/EdgeFunctionServer.js";
 import { httpRequest } from "../helpers/http.js";
 import { FUNCTIONS_DIR } from "../helpers/fixtures.js";
 import WebSocket from "ws";
+import { Buffer } from "node:buffer";
 
 describe("WebSocket E2E – Node adapter", { timeout: 30_000 }, () => {
   let server: EdgeFunctionServer | undefined;
@@ -198,10 +199,9 @@ describe("WebSocket E2E – Node adapter", { timeout: 30_000 }, () => {
     // The websocket-echo fixture uses Deno.upgradeWebSocket which doesn't
     // automatically negotiate subprotocols, so we verify the header is forwarded
     // by checking the raw upgrade response.
-    const ws = new WebSocket(
-      `ws://localhost:${server.port}/websocket-echo`,
-      { headers: { "Sec-WebSocket-Protocol": "echo-protocol" } }
-    );
+    const ws = new WebSocket(`ws://localhost:${server.port}/websocket-echo`, {
+      headers: { "Sec-WebSocket-Protocol": "echo-protocol" },
+    });
     const result = await new Promise<string>((resolve, reject) => {
       ws.on("open", () => ws.send("proto-test"));
       ws.on("message", (data) => {

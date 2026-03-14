@@ -6,6 +6,7 @@ import {
   buildClosePayload,
   parseClosePayload,
 } from "../../server/core/WebSocketFrameCodec";
+import { Buffer } from "node:buffer";
 
 describe("WebSocketFrameCodec", () => {
   describe("parseFrame", () => {
@@ -59,10 +60,7 @@ describe("WebSocketFrameCodec", () => {
       codeBuf.writeUInt16BE(code, 0);
       const reasonBuf = Buffer.from(reason);
       const payload = Buffer.concat([codeBuf, reasonBuf]);
-      const buf = Buffer.concat([
-        Buffer.from([0x88, payload.length]),
-        payload,
-      ]);
+      const buf = Buffer.concat([Buffer.from([0x88, payload.length]), payload]);
       const frame = parseFrame(buf);
       expect(frame).not.toBeNull();
       expect(frame!.opcode).toBe(WebSocketOpcode.CLOSE);
@@ -230,7 +228,9 @@ describe("WebSocketFrameCodec", () => {
     });
 
     it("should handle various close codes", () => {
-      for (const testCode of [1000, 1001, 1002, 1003, 1006, 1007, 1008, 1009, 1010, 1011]) {
+      for (const testCode of [
+        1000, 1001, 1002, 1003, 1006, 1007, 1008, 1009, 1010, 1011,
+      ]) {
         const payload = buildClosePayload(testCode);
         const { code } = parseClosePayload(payload);
         expect(code).toBe(testCode);

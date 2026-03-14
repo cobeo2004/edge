@@ -137,7 +137,7 @@ describe("WebSocketProxyHandler", () => {
 
     it("should handle unknown worker gracefully", () => {
       expect(() =>
-        handler.closeAllConnections("fn1", "unknown", 1001, "x"),
+        handler.closeAllConnections("fn1", "unknown", 1001, "x")
       ).not.toThrow();
     });
   });
@@ -168,7 +168,7 @@ describe("WebSocketProxyHandler", () => {
 
     it("should handle unknown function gracefully", () => {
       expect(() =>
-        handler.closeAllConnectionsForFunction("unknown", 1001, "x"),
+        handler.closeAllConnectionsForFunction("unknown", 1001, "x")
       ).not.toThrow();
     });
   });
@@ -179,7 +179,7 @@ describe("WebSocketProxyHandler", () => {
       const id2 = handler.generateConnectionId();
       expect(id1).not.toBe(id2);
       expect(id1).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
       );
     });
   });

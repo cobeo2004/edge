@@ -1,7 +1,10 @@
 import http from "node:http";
 import { Readable } from "node:stream";
 import type { ServerAdapter, AdapterServer, RequestHandler } from "./types.js";
-import type { NodeUpgradeHandler, WebSocketUpgradeHandler } from "../core/WebSocketTypes.js";
+import type {
+  NodeUpgradeHandler,
+  WebSocketUpgradeHandler,
+} from "../core/WebSocketTypes.js";
 
 function toWebRequest(req: http.IncomingMessage): Request {
   const host = req.headers.host ?? "localhost";
@@ -94,7 +97,7 @@ class NodeAdapterServer implements AdapterServer {
       this.#server.on("upgrade", (req, socket, head) => {
         const url = new URL(
           req.url ?? "/",
-          `http://${req.headers.host ?? "localhost"}`,
+          `http://${req.headers.host ?? "localhost"}`
         );
         const functionName = url.pathname.split("/")[1] ?? "";
         if (!functionName) {

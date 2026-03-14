@@ -12,10 +12,12 @@ Deno.serve((req) => {
   const { socket, response } = Deno.upgradeWebSocket(req);
   const claims = req.headers.get("x-auth-claims") ?? "";
   socket.onmessage = (e) => {
-    socket.send(JSON.stringify({
-      message: e.data,
-      claims: claims ? JSON.parse(decodeBase64Url(claims)) : null,
-    }));
+    socket.send(
+      JSON.stringify({
+        message: e.data,
+        claims: claims ? JSON.parse(decodeBase64Url(claims)) : null,
+      })
+    );
   };
   return response;
 });

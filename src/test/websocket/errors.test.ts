@@ -12,8 +12,12 @@ import crypto from "node:crypto";
  */
 function rawUpgrade(
   port: number,
-  path: string,
-): Promise<{ statusCode: number; socket: import("node:net").Socket; headers: http.IncomingHttpHeaders }> {
+  path: string
+): Promise<{
+  statusCode: number;
+  socket: import("node:net").Socket;
+  headers: http.IncomingHttpHeaders;
+}> {
   return new Promise((resolve, reject) => {
     const key = crypto.randomBytes(16).toString("base64");
     const req = http.request({
@@ -29,14 +33,18 @@ function rawUpgrade(
       },
     });
 
-    req.on("upgrade", (res, socket, head) => {
+    req.on("upgrade", (res, socket, _head) => {
       resolve({ statusCode: 101, socket, headers: res.headers });
     });
 
     req.on("response", (res) => {
       // Non-upgrade response (e.g. 503)
-      const socket = (res as any).socket;
-      resolve({ statusCode: res.statusCode ?? 0, socket, headers: res.headers });
+      const socket = res.socket;
+      resolve({
+        statusCode: res.statusCode ?? 0,
+        socket,
+        headers: res.headers,
+      });
     });
 
     req.on("error", reject);
@@ -68,10 +76,10 @@ describe("EdgeFunctionServer – WebSocket errors", { timeout: 30000 }, () => {
       port: 0,
       maxWebSocketConnections: 1,
       maxWorkers: 1,
-      onWebSocketConnect: (_fn, connectionId) => {
+      onWebSocketConnect: (_fn: string, connectionId: string) => {
         connectCalls.push(connectionId);
       },
-      onWebSocketClose: (_fn, connectionId) => {
+      onWebSocketClose: (_fn: string, connectionId: string) => {
         closeCalls.push(connectionId);
       },
     });
@@ -126,7 +134,7 @@ describe("EdgeFunctionServer – WebSocket errors", { timeout: 30000 }, () => {
 
     const { statusCode, socket } = await rawUpgrade(
       server.port,
-      "/websocket-echo",
+      "/websocket-echo"
     );
     expect(statusCode).toBe(101);
 
@@ -157,7 +165,11 @@ describe("EdgeFunctionServer – WebSocket errors", { timeout: 30000 }, () => {
     server = new EdgeFunctionServer({
       functionsDir: FUNCTIONS_DIR,
       port: 0,
-      onWebSocketError: (functionName, connectionId, error) => {
+      onWebSocketError: (
+        functionName: string,
+        connectionId: string,
+        error: Error
+      ) => {
         errors.push({ functionName, connectionId, error });
       },
     });
