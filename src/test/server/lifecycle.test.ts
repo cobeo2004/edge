@@ -85,6 +85,8 @@ describe("EdgeFunctionServer – lifecycle", { timeout: 15_000 }, () => {
       "slow",
       "unresponsive",
       "wasm-test",
+      "websocket-echo",
+      "websocket-reject",
     ]);
   });
 

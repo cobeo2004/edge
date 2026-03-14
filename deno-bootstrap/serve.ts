@@ -68,6 +68,20 @@ const server = originalServe.call(Deno, {
     if (!headerUrl) {
       return Response.json({ warming: true }, { status: 200 });
     }
+
+    const isUpgrade = req.headers.get("upgrade") === "websocket";
+
+    if (isUpgrade) {
+      // WebSocket upgrade: pass original request directly to preserve
+      // internal upgrade state needed by Deno.upgradeWebSocket().
+      // We cannot use new Request() (strips upgrade state) or modify
+      // headers (immutable on Deno.serve requests). The X-Deno-Worker-*
+      // headers will be present but harmless — the user's handler
+      // typically only checks the "upgrade" header.
+      return handler(req);
+    }
+
+    // Non-upgrade: reconstruct Request with correct URL
     const url = new URL(headerUrl);
     req = new Request(url.toString(), req);
 
@@ -79,7 +93,7 @@ const server = originalServe.call(Deno, {
     if (req.headers.has("X-Deno-Worker-Connection")) {
       req.headers.set(
         "connection",
-        req.headers.get("X-Deno-Worker-Connection")!
+        req.headers.get("X-Deno-Worker-Connection")!,
       );
     }
 
