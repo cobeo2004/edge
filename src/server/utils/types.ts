@@ -119,4 +119,8 @@ export interface EdgeFunctionServerOptions {
     connectionId: string,
     error: Error
   ) => void;
+  /** Maximum time (ms) to wait for background tasks after last response. Default: 30000 */
+  backgroundTaskTimeout?: number;
+  /** Whether pending background tasks prevent idle timeout. Default: true */
+  backgroundTaskKeepsAlive?: boolean;
 }

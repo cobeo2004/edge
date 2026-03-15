@@ -22,4 +22,8 @@ export interface FunctionConfig {
    * when their maximum duration is reached (default: true).
    */
   websocketKeepsAlive?: boolean;
+  /** Maximum time (ms) to wait for background tasks after response. Overrides server-level backgroundTaskTimeout */
+  backgroundTaskTimeout?: number;
+  /** Whether pending background tasks prevent idle timeout. Overrides server-level backgroundTaskKeepsAlive */
+  backgroundTaskKeepsAlive?: boolean;
 }

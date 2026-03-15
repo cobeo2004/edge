@@ -33,6 +33,7 @@ export interface PoolStats {
   instanceCount: number;
   totalRequests: number;
   activeRequests: number;
+  totalBackgroundTasks: number;
   restartCount: number;
   instances: InstanceStats[];
 }
@@ -42,6 +43,7 @@ export interface InstanceStats {
   activeRequests: number;
   totalRequests: number;
   uptimeMs: number;
+  backgroundTaskCount: number;
 }
 
 export function createWorkerInstance(
