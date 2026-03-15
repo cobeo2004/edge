@@ -73,6 +73,8 @@ describe("Background Tasks", () => {
   it("tracks backgroundTaskCount on worker", async () => {
     worker = await newDenoHTTPWorker(new URL(`file://${BG_TASK_ENTRY}`), {
       denoBootstrapScriptPath: SERVE_BOOTSTRAP,
+      onBackgroundTaskStarted: () => {},
+      onBackgroundTaskComplete: () => {},
     });
 
     expect(worker.backgroundTaskCount).toBe(0);

@@ -229,36 +229,47 @@ export const newDenoHTTPWorker = async (
           logHandler("info", "stdout", line);
         });
       }
-      // Always parse stderr for background task control messages (\x00BG:)
+      // Parse stderr for background task control messages (\x00BG:) and logging.
+      // Only create readline when needed — it consumes the stream exclusively,
+      // preventing direct .read() access (used by some tests/consumers).
       let bgWorkerRef: DenoHTTPWorkerImpl | undefined;
       const bgEarlyQueue: Array<{ event: string }> = [];
+      const hasBgCallbacks =
+        _options.onBackgroundTaskStarted || _options.onBackgroundTaskComplete;
+      const needsStderrParsing =
+        hasBgCallbacks || shouldLog(effectiveLogLevel, "warn");
 
-      readline.createInterface({ input: stderr }).on("line", (line) => {
-        if (line.startsWith("\x00BG:")) {
-          try {
-            const payload = JSON.parse(line.slice(4));
-            if (payload.event === "started" || payload.event === "complete") {
-              if (bgWorkerRef) {
-                if (payload.event === "started") {
-                  bgWorkerRef.incrementBackgroundTasks();
-                  _options.onBackgroundTaskStarted?.();
+      if (needsStderrParsing) {
+        readline.createInterface({ input: stderr }).on("line", (line) => {
+          if (line.startsWith("\x00BG:")) {
+            try {
+              const payload = JSON.parse(line.slice(4));
+              if (
+                payload.event === "started" ||
+                payload.event === "complete"
+              ) {
+                if (bgWorkerRef) {
+                  if (payload.event === "started") {
+                    bgWorkerRef.incrementBackgroundTasks();
+                    _options.onBackgroundTaskStarted?.();
+                  } else {
+                    bgWorkerRef.decrementBackgroundTasks();
+                    _options.onBackgroundTaskComplete?.();
+                  }
                 } else {
-                  bgWorkerRef.decrementBackgroundTasks();
-                  _options.onBackgroundTaskComplete?.();
+                  bgEarlyQueue.push(payload);
                 }
-              } else {
-                bgEarlyQueue.push(payload);
               }
+            } catch {
+              // Ignore malformed BG messages
             }
-          } catch {
-            // Ignore malformed BG messages
+            return;
           }
-          return;
-        }
-        if (shouldLog(effectiveLogLevel, "warn")) {
-          logHandler("warn", "stderr", line);
-        }
-      });
+          if (shouldLog(effectiveLogLevel, "warn")) {
+            logHandler("warn", "stderr", line);
+          }
+        });
+      }
 
       // Wait for the socket file to be created by the Deno process.
       for (;;) {
@@ -281,18 +292,20 @@ export const newDenoHTTPWorker = async (
         requestTimeout: _options.requestTimeout,
         workerMaxDuration: _options.workerMaxDuration,
       });
-      bgWorkerRef = worker as DenoHTTPWorkerImpl;
-      // Flush any BG messages that arrived before worker was constructed
-      for (const msg of bgEarlyQueue) {
-        if (msg.event === "started") {
-          bgWorkerRef.incrementBackgroundTasks();
-          _options.onBackgroundTaskStarted?.();
-        } else if (msg.event === "complete") {
-          bgWorkerRef.decrementBackgroundTasks();
-          _options.onBackgroundTaskComplete?.();
+      if (needsStderrParsing) {
+        bgWorkerRef = worker as DenoHTTPWorkerImpl;
+        // Flush any BG messages that arrived before worker was constructed
+        for (const msg of bgEarlyQueue) {
+          if (msg.event === "started") {
+            bgWorkerRef.incrementBackgroundTasks();
+            _options.onBackgroundTaskStarted?.();
+          } else if (msg.event === "complete") {
+            bgWorkerRef.decrementBackgroundTasks();
+            _options.onBackgroundTaskComplete?.();
+          }
         }
+        bgEarlyQueue.length = 0;
       }
-      bgEarlyQueue.length = 0;
       running = true;
       await (worker as DenoHTTPWorkerImpl).warmRequest();
 
