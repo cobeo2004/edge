@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
 });
 ```
 
-### 2. Host Communication (Structured Stdout Messages)
+### 2. Host Communication (Structured Stderr Messages)
 
 **Mechanism:** The bootstrap writes structured JSON messages to **stderr** with a unique prefix (`\x00BG:`) that distinguishes them from user output. The host parses the stderr stream, identifies lines starting with `\x00BG:`, and extracts the JSON payload.
 
@@ -141,7 +141,7 @@ getBackgroundTaskCount(instanceId: string): number { ... }
 
 - New option: `backgroundTaskKeepsAlive?: boolean` (default `true`)
 - When `backgroundTaskKeepsAlive` is `true` and background task count > 0: pause idle timer (clear it)
-- When background tasks reach 0 and active requests are also 0 and WebSocket connections are also 0: restart idle timer
+- When background tasks reach 0 and active requests are also 0 and (WebSocket connections are also 0 or `websocketKeepsAlive` is `false`): restart idle timer
 - Modify `#startIdleTimer` to check background task count alongside WebSocket count
 
 #### Graceful Shutdown
@@ -153,7 +153,7 @@ getBackgroundTaskCount(instanceId: string): number { ... }
 
 ### 5. Background Task Timeout
 
-**Enforcement:** The timeout is enforced by the host, not the bootstrap. When a background task notification (`/__bg/started`) arrives, the host starts (or resets) a per-instance timeout timer. If the timer fires while tasks are still pending, the worker is terminated (consistent with `workerMaxDuration` behavior).
+**Enforcement:** The timeout is enforced by the host, not the bootstrap. When a `\x00BG:{"event":"started"}` stderr message arrives, the host starts (or resets) a per-instance timeout timer. If the timer fires while tasks are still pending, the worker is terminated (consistent with `workerMaxDuration` behavior).
 
 **Configuration:**
 
@@ -234,7 +234,7 @@ backgroundTaskKeepsAlive?: boolean;
 
 **Unit tests:**
 - Bootstrap: `waitUntil` tracks promises, sends sideband callbacks, awaits on SIGINT
-- Worker: intercepts `/__bg/*` paths, tracks counts
+- Worker: parses `\x00BG:` stderr messages, tracks counts
 - Lifecycle manager: background task tracking, idle timer interaction, timeout enforcement
 
 **Integration tests:**
