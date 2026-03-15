@@ -206,6 +206,77 @@ describe("WebSocketProxyHandler", () => {
     });
   });
 
+  describe("global connection cap", () => {
+    it("rejects when total connections reach global cap", () => {
+      const handler = new WebSocketProxyHandler({
+        maxWebSocketConnections: 100,
+        globalMaxWebSocketConnections: 3,
+      });
+      handler.addConnection("fnA", "w1", "c1");
+      handler.addConnection("fnA", "w1", "c2");
+      handler.addConnection("fnB", "w2", "c3");
+
+      // Per-worker limit not hit (100), but global cap (3) reached
+      expect(handler.canAcceptConnection("fnA", "w1")).toBe(false);
+      expect(handler.canAcceptConnection("fnB", "w2")).toBe(false);
+      // New function/worker also rejected
+      expect(handler.canAcceptConnection("fnC", "w3")).toBe(false);
+    });
+
+    it("accepts after connection removed brings below global cap", () => {
+      const handler = new WebSocketProxyHandler({
+        maxWebSocketConnections: 100,
+        globalMaxWebSocketConnections: 2,
+      });
+      handler.addConnection("fn", "w1", "c1");
+      handler.addConnection("fn", "w1", "c2");
+      expect(handler.canAcceptConnection("fn", "w1")).toBe(false);
+
+      handler.removeConnection("fn", "w1", "c1");
+      expect(handler.canAcceptConnection("fn", "w1")).toBe(true);
+    });
+
+    it("getTotalConnectionCount tracks across functions and workers", () => {
+      const handler = new WebSocketProxyHandler({
+        maxWebSocketConnections: 100,
+      });
+      expect(handler.getTotalConnectionCount()).toBe(0);
+
+      handler.addConnection("fnA", "w1", "c1");
+      expect(handler.getTotalConnectionCount()).toBe(1);
+
+      handler.addConnection("fnB", "w2", "c2");
+      expect(handler.getTotalConnectionCount()).toBe(2);
+
+      handler.removeConnection("fnA", "w1", "c1");
+      expect(handler.getTotalConnectionCount()).toBe(1);
+    });
+
+    it("no global cap when globalMaxWebSocketConnections not set", () => {
+      const handler = new WebSocketProxyHandler({
+        maxWebSocketConnections: 2,
+      });
+      handler.addConnection("fnA", "w1", "c1");
+      handler.addConnection("fnB", "w2", "c2");
+      handler.addConnection("fnC", "w3", "c3");
+
+      // Per-worker limit (2) not hit for any worker, no global cap set
+      expect(handler.canAcceptConnection("fnD", "w4")).toBe(true);
+    });
+
+    it("per-worker limit > global cap — per-worker passes but global rejects", () => {
+      const handler = new WebSocketProxyHandler({
+        maxWebSocketConnections: 100,
+        globalMaxWebSocketConnections: 2,
+      });
+      handler.addConnection("fn", "w1", "c1");
+      handler.addConnection("fn", "w1", "c2");
+
+      // Per-worker limit is 100 (not reached), but global cap is 2 (reached)
+      expect(handler.canAcceptConnection("fn", "w1")).toBe(false);
+    });
+  });
+
   describe("generateConnectionId", () => {
     it("should return unique UUIDs", () => {
       const id1 = handler.generateConnectionId();

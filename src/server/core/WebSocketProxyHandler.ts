@@ -15,6 +15,7 @@ import {
 
 export interface WebSocketProxyHandlerOptions extends WebSocketHooks {
   maxWebSocketConnections: number;
+  globalMaxWebSocketConnections?: number;
 }
 
 export class WebSocketProxyHandler {
@@ -31,6 +32,7 @@ export class WebSocketProxyHandler {
     functionName: string,
     workerInstanceId: string
   ) => void;
+  #totalConnections = 0;
 
   constructor(options: WebSocketProxyHandlerOptions) {
     this.#options = options;
@@ -64,6 +66,7 @@ export class WebSocketProxyHandler {
       funcMap.set(workerInstanceId, new Set());
     }
     funcMap.get(workerInstanceId)!.add(connectionId);
+    this.#totalConnections++;
     this.#onConnectionAdded?.(functionName, workerInstanceId);
     this.#options.onWebSocketConnect?.(functionName, connectionId);
   }
@@ -80,6 +83,7 @@ export class WebSocketProxyHandler {
     const workerSet = funcMap.get(workerInstanceId);
     if (!workerSet) return;
     workerSet.delete(connectionId);
+    this.#totalConnections--;
     if (workerSet.size === 0) funcMap.delete(workerInstanceId);
     if (funcMap.size === 0) this.#connections.delete(functionName);
     const cb = this.#cleanupCallbacks.get(connectionId);
@@ -136,7 +140,20 @@ export class WebSocketProxyHandler {
     perWorkerLimit?: number
   ): boolean {
     const limit = perWorkerLimit ?? this.#options.maxWebSocketConnections;
-    return this.getConnectionCount(functionName, workerInstanceId) < limit;
+    if (this.getConnectionCount(functionName, workerInstanceId) >= limit) {
+      return false;
+    }
+    if (
+      this.#options.globalMaxWebSocketConnections !== undefined &&
+      this.#totalConnections >= this.#options.globalMaxWebSocketConnections
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  getTotalConnectionCount(): number {
+    return this.#totalConnections;
   }
 
   emitError(functionName: string, connectionId: string, error: Error): void {
