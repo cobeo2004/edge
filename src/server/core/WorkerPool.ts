@@ -475,9 +475,11 @@ export class WorkerPool {
         userOptions.workerMaxDuration ?? this.#serverOptions.workerMaxDuration,
       onBackgroundTaskStarted: () => {
         this.#managers.get(name)?.incrementBackgroundTasks(instanceId);
+        userOptions.onBackgroundTaskStarted?.();
       },
       onBackgroundTaskComplete: () => {
         this.#managers.get(name)?.decrementBackgroundTasks(instanceId);
+        userOptions.onBackgroundTaskComplete?.();
       },
     });
   }
