@@ -59,29 +59,34 @@ Deno.serve(async (req) => {
 });
 ```
 
-### 2. Host Communication (Sideband HTTP Callback)
+### 2. Host Communication (Structured Stdout Messages)
 
-**Mechanism:** The bootstrap sends HTTP requests back to the host over the same Unix socket, using reserved control paths that are intercepted before reaching the user's handler.
+**Mechanism:** The bootstrap writes structured JSON messages to **stderr** with a unique prefix (`\x00BG:`) that distinguishes them from user output. The host parses the stderr stream, identifies lines starting with `\x00BG:`, and extracts the JSON payload.
 
-**Control paths:**
+**Why stderr:** User code typically writes to `console.log` (stdout). Using stderr with a binary prefix (`\x00`) makes collisions with user output virtually impossible. The host already captures both stdout and stderr streams from the Deno subprocess.
 
-| Path | Method | Purpose |
-|------|--------|---------|
-| `/__bg/started` | `POST` | A new background task was registered |
-| `/__bg/complete` | `POST` | A background task settled (resolved or rejected) |
+**Message format:**
+
+```
+\x00BG:{"event":"started"}\n
+\x00BG:{"event":"complete"}\n
+```
 
 **Bootstrap side:**
-- Uses `fetch()` (available in Deno) to send requests to `http://localhost/__bg/started` via the Unix socket.
-- Requests are fire-and-forget from the bootstrap's perspective — errors are logged but don't affect task execution.
+- On `waitUntil(promise)`: writes `\x00BG:{"event":"started"}` to stderr.
+- When a promise settles: writes `\x00BG:{"event":"complete"}` to stderr.
+- Messages are synchronous writes — no async overhead, no failure modes beyond process death.
 
-**Host side (`deno-bootstrap/serve.ts` handler):**
-- The existing handler in the `originalServe` call intercepts requests where the path matches `/__bg/*` before forwarding to the user's handler.
-- These control requests return a `200 OK` with no body.
+**Host side (`DenoHTTPWorkerImpl`):**
+- The host attaches a line parser to the worker's stderr stream.
+- Lines starting with `\x00BG:` are intercepted, parsed as JSON, and routed to the lifecycle manager.
+- All other stderr lines pass through to the existing stderr handling (user logs, error output).
+- Parsing errors on `\x00BG:` lines are logged and ignored (defensive).
 
-**Why sideband over alternatives:**
-- Response headers (Option A) only update at response time — the host can't know when tasks complete after the response is sent.
-- Stdout JSON (Option C) mixes with user logs and requires parsing.
-- Sideband reuses the existing Unix socket, gives real-time notification, and cleanly separates control traffic from user traffic.
+**Why structured stdout over alternatives:**
+- **HTTP sideband (rejected):** The bootstrap IS the server on the Unix socket — it cannot `fetch()` back to the host because there is no reverse channel. A separate control socket adds unnecessary complexity.
+- **Response headers (rejected):** Only update at response time — the host can't know when tasks complete after the response is sent.
+- **Stdout JSON lines with `\x00` prefix:** Simple, zero additional connections, real-time notification, and the binary prefix prevents collision with user logs.
 
 ### 3. Worker Instance Tracking
 
@@ -105,7 +110,13 @@ decrementBackgroundTasks(): void {
 }
 ```
 
-The handler in the worker's request pipeline intercepts `/__bg/started` and `/__bg/complete` paths, calling the increment/decrement methods and notifying the lifecycle manager.
+**Stderr stream parsing:** `DenoHTTPWorkerImpl` attaches a line parser to the stderr stream during construction. Lines prefixed with `\x00BG:` are intercepted and parsed:
+- `{"event":"started"}` → calls `incrementBackgroundTasks()`
+- `{"event":"complete"}` → calls `decrementBackgroundTasks()`
+
+Non-`\x00BG:` lines pass through to the existing stderr handling unchanged.
+
+The worker emits events (`bg:started`, `bg:complete`) that the `WorkerPool` / `EdgeFunctionServer` listens to for forwarding to the lifecycle manager.
 
 Add `backgroundTaskCount` to the `DenoHTTPWorker` interface.
 
@@ -135,7 +146,9 @@ getBackgroundTaskCount(instanceId: string): number { ... }
 
 #### Graceful Shutdown
 
-- `dispose()` and `restart()`: if instances have pending background tasks, allow them to drain up to `backgroundTaskTimeout` before terminating.
+- `dispose()` remains synchronous and hard-terminates all instances (existing behavior, no breaking change).
+- New method `gracefulDispose(timeout?: number): Promise<void>`: waits for all instances to drain background tasks up to the given timeout (defaults to `backgroundTaskTimeout`), then terminates remaining instances.
+- `EdgeFunctionServer.stop()` calls `gracefulDispose()` instead of `dispose()` to allow background task draining.
 - New internal method `#waitForBackgroundTasks(instance, timeout)`: returns a promise that resolves when background task count reaches 0 or timeout expires.
 
 ### 5. Background Task Timeout
@@ -149,7 +162,10 @@ getBackgroundTaskCount(instanceId: string): number { ... }
 | Global | `EdgeFunctionServerOptions.backgroundTaskTimeout` | `30000` (30s) |
 | Per-function | `function.json` → `backgroundTaskTimeout` | Inherits global |
 
-The timeout measures time since the **last HTTP response was sent** while background tasks are pending. If a new request arrives while background tasks are running, the timeout is paused (the worker is actively serving) and resumes after the new response is sent.
+**Timeout start/reset semantics under concurrency:**
+- The timeout timer **starts** when `activeRequests` drops to 0 AND `backgroundTaskCount > 0`.
+- The timeout timer **clears** when `backgroundTaskCount` drops to 0 (all tasks finished in time).
+- The timeout timer **resets** if `activeRequests` transitions from 0 → >0 → 0 again while tasks are still pending (new request arrived and completed — give tasks a fresh window).
 
 **On timeout:**
 1. Log a warning with function name and pending task count.
@@ -160,7 +176,9 @@ The timeout measures time since the **last HTTP response was sent** while backgr
 
 **File:** `src/server/core/WorkerPool.ts`
 
-- Background task counts are included in pool stats via `getStats()`.
+- Background task counts are included in pool stats via `getStats()`:
+  - `InstanceStats.backgroundTaskCount: number` — pending background tasks for this instance
+  - `PoolStats.totalBackgroundTasks: number` — sum across all instances
 - Least-loaded routing considers only `activeRequests` (not background tasks) — a worker running background tasks should still accept new requests.
 - The `backgroundTaskKeepsAlive` option flows from `EdgeFunctionServerOptions` through to `WorkerLifecycleManager`.
 
@@ -184,7 +202,15 @@ backgroundTaskTimeout?: number;
 backgroundTaskKeepsAlive?: boolean;
 ```
 
-**`function.json` additions:**
+**`function.json` additions (via `FunctionConfig` in `src/permissions/types.ts`):**
+
+```typescript
+/** Maximum time (ms) to wait for background tasks after response. Inherits global if unset. */
+backgroundTaskTimeout?: number;
+
+/** Whether pending background tasks prevent idle timeout. Inherits global if unset. */
+backgroundTaskKeepsAlive?: boolean;
+```
 
 ```json
 {
@@ -199,7 +225,7 @@ backgroundTaskKeepsAlive?: boolean;
 |----------|----------|
 | `waitUntil` called with non-Promise | No-op, ignored silently |
 | Background promise rejects | Logged to stderr, counter decremented, worker stays alive |
-| Sideband callback fails | Logged, task still runs in Deno (host may not track it) |
+| Stderr message malformed | Logged and ignored, task still runs in Deno (host may not track it) |
 | Timeout exceeded | Worker terminated via SIGKILL |
 | Worker crashes with pending tasks | Normal crash handling, tasks lost (expected) |
 | `waitUntil` called after SIGINT | Promise tracked but subject to shutdown timeout |
