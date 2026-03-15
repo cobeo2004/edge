@@ -1,3 +1,35 @@
+// --- Background task support ---
+const _bgPendingTasks = new Set<Promise<unknown>>();
+const _bgEncoder = new TextEncoder();
+
+function _bgNotifyHost(event: string): void {
+  try {
+    Deno.stderr.writeSync(
+      _bgEncoder.encode(`\x00BG:{"event":"${event}"}\n`)
+    );
+  } catch {
+    // Ignore write errors (process shutting down)
+  }
+}
+
+(globalThis as Record<string, unknown>).EdgeRuntime = {
+  waitUntil(promise: Promise<unknown>): void {
+    if (!promise || typeof (promise as Promise<unknown>).then !== "function") {
+      return;
+    }
+    _bgPendingTasks.add(promise);
+    _bgNotifyHost("started");
+    promise
+      .catch((err: unknown) => {
+        console.error("Background task failed:", err);
+      })
+      .finally(() => {
+        _bgPendingTasks.delete(promise);
+        _bgNotifyHost("complete");
+      });
+  },
+};
+
 const socketFile = Deno.args[0];
 const scriptType = Deno.args[1];
 const script = Deno.args[2];
@@ -115,5 +147,8 @@ addEventListener("unhandledrejection", (e) => {
 });
 
 Deno.addSignalListener("SIGINT", async () => {
+  if (_bgPendingTasks.size > 0) {
+    await Promise.allSettled([..._bgPendingTasks]);
+  }
   await server.shutdown();
 });
