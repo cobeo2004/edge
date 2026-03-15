@@ -524,7 +524,7 @@ const server = new EdgeFunctionServer({
 
 ### Per-function configuration (`function.json`)
 
-Each function directory can contain a `function.json` that declares its permission profile, auth settings, and idle timeout:
+Each function directory can contain a `function.json` that declares its permission profile, auth settings, idle timeout, and WebSocket settings:
 
 ```
 functions/
@@ -791,10 +791,10 @@ flowchart TD
 
 ### Per-function overrides
 
-Override pool settings per function via `function.json`:
+Override pool and WebSocket settings per function via `function.json`:
 
 ```json
-{ "minWorkers": 2, "maxWorkers": 8, "eagerSpawn": true }
+{ "minWorkers": 2, "maxWorkers": 8, "eagerSpawn": true, "maxWebSocketConnections": 50, "websocketKeepsAlive": false }
 ```
 
 Per-function values take priority over server-level defaults.
@@ -885,6 +885,7 @@ const server = newEdgeFunctionServer({
   functionsDir: "/path/to/functions",
   port: 3000,
   maxWebSocketConnections: 100, // per worker instance (default: 100)
+  globalMaxWebSocketConnections: 500, // server-wide cap across all functions/workers (optional)
   websocketKeepsAlive: true, // WS connections prevent idle timeout (default: true)
   onWebSocketConnect: (functionName, connectionId) => {
     console.log(`WS connected: ${functionName} (${connectionId})`);
@@ -900,7 +901,21 @@ const server = newEdgeFunctionServer({
 
 ### Per-function configuration
 
-WebSocket settings (`maxWebSocketConnections`, `websocketKeepsAlive`) are currently configured at the server level only. Per-function overrides via `function.json` are planned for a future release.
+Override WebSocket settings per function via `function.json`:
+
+```json
+{
+  "maxWebSocketConnections": 50,
+  "websocketKeepsAlive": false
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `maxWebSocketConnections` | `number` | Max connections per worker instance for this function (default: server-level value or `100`) |
+| `websocketKeepsAlive` | `boolean` | Whether active connections prevent idle timeout for this function (default: server-level value or `true`) |
+
+Per-function values take priority over server-level defaults. The `globalMaxWebSocketConnections` server-wide cap is always enforced on top of per-function limits.
 
 ### Authentication
 
@@ -1016,8 +1031,9 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `defaultPermissionProfile` | `string`                                              | Default permission profile for all functions (default: `"standard"`)                            |
 | `functionPermissions`      | `Record<string, string \| string[]>`                  | Per-function permission overrides (priority over function.json)                                 |
 | `permissionProfiles`       | `Record<string, string[]>`                            | Custom named permission profiles (merged with built-ins)                                        |
-| `maxWebSocketConnections`  | `number`                                              | Max WebSocket connections per worker instance (default: `100`)                                  |
-| `websocketKeepsAlive`      | `boolean`                                             | Active WebSocket connections prevent idle timeout; does not affect `workerMaxDuration` (default: `true`) |
+| `maxWebSocketConnections`  | `number`                                              | Max WebSocket connections per worker instance (default: `100`). Overridable per function via `function.json`. |
+| `globalMaxWebSocketConnections` | `number`                                         | Server-wide cap on total WebSocket connections across all functions/workers. When not set, no global cap is enforced. |
+| `websocketKeepsAlive`      | `boolean`                                             | Active WebSocket connections prevent idle timeout; does not affect `workerMaxDuration` (default: `true`). Overridable per function via `function.json`. |
 | `onWebSocketConnect`       | `(functionName: string, connectionId: string) => void` | Called when a WebSocket connection is established                                              |
 | `onWebSocketClose`         | `(functionName: string, connectionId: string, code: number, reason: string) => void` | Called when a WebSocket connection is closed                    |
 | `onWebSocketError`         | `(functionName: string, connectionId: string, error: Error) => void` | Called when a WebSocket connection errors                                        |
