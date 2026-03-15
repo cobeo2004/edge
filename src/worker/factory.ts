@@ -229,11 +229,36 @@ export const newDenoHTTPWorker = async (
           logHandler("info", "stdout", line);
         });
       }
-      if (shouldLog(effectiveLogLevel, "warn")) {
-        readline.createInterface({ input: stderr }).on("line", (line) => {
+      // Always parse stderr for background task control messages (\x00BG:)
+      let bgWorkerRef: DenoHTTPWorkerImpl | undefined;
+      const bgEarlyQueue: Array<{ event: string }> = [];
+
+      readline.createInterface({ input: stderr }).on("line", (line) => {
+        if (line.startsWith("\x00BG:")) {
+          try {
+            const payload = JSON.parse(line.slice(4));
+            if (payload.event === "started" || payload.event === "complete") {
+              if (bgWorkerRef) {
+                if (payload.event === "started") {
+                  bgWorkerRef.incrementBackgroundTasks();
+                  _options.onBackgroundTaskStarted?.();
+                } else {
+                  bgWorkerRef.decrementBackgroundTasks();
+                  _options.onBackgroundTaskComplete?.();
+                }
+              } else {
+                bgEarlyQueue.push(payload);
+              }
+            }
+          } catch {
+            // Ignore malformed BG messages
+          }
+          return;
+        }
+        if (shouldLog(effectiveLogLevel, "warn")) {
           logHandler("warn", "stderr", line);
-        });
-      }
+        }
+      });
 
       // Wait for the socket file to be created by the Deno process.
       for (;;) {
@@ -256,6 +281,18 @@ export const newDenoHTTPWorker = async (
         requestTimeout: _options.requestTimeout,
         workerMaxDuration: _options.workerMaxDuration,
       });
+      bgWorkerRef = worker as DenoHTTPWorkerImpl;
+      // Flush any BG messages that arrived before worker was constructed
+      for (const msg of bgEarlyQueue) {
+        if (msg.event === "started") {
+          bgWorkerRef.incrementBackgroundTasks();
+          _options.onBackgroundTaskStarted?.();
+        } else if (msg.event === "complete") {
+          bgWorkerRef.decrementBackgroundTasks();
+          _options.onBackgroundTaskComplete?.();
+        }
+      }
+      bgEarlyQueue.length = 0;
       running = true;
       await (worker as DenoHTTPWorkerImpl).warmRequest();
 
