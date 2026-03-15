@@ -38,6 +38,7 @@ describe("EdgeFunctionServer – routing", { timeout: 15_000 }, () => {
       "websocket-auth-echo",
       "websocket-echo",
       "websocket-reject",
+      "ws-custom-config",
     ]);
   });
 

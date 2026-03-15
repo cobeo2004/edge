@@ -1,0 +1,4 @@
+{
+  "maxWebSocketConnections": 2,
+  "websocketKeepsAlive": false
+}
