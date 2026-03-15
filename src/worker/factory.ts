@@ -244,10 +244,7 @@ export const newDenoHTTPWorker = async (
           if (line.startsWith("\x00BG:")) {
             try {
               const payload = JSON.parse(line.slice(4));
-              if (
-                payload.event === "started" ||
-                payload.event === "complete"
-              ) {
+              if (payload.event === "started" || payload.event === "complete") {
                 if (bgWorkerRef) {
                   if (payload.event === "started") {
                     bgWorkerRef.incrementBackgroundTasks();
