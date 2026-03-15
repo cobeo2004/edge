@@ -278,7 +278,13 @@ export class EdgeFunctionServer {
     }
 
     this.#pool?.stopAllHealthChecks();
-    this.#pool?.terminateAll();
+
+    // Graceful shutdown: wait for background tasks to drain before terminating
+    if (this.#pool) {
+      await this.#pool.gracefulTerminateAll(
+        this.#options.backgroundTaskTimeout ?? 30_000
+      );
+    }
 
     // Clean up generated import map
     await this.#registry.cleanupImportMap();

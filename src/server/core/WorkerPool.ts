@@ -309,6 +309,15 @@ export class WorkerPool {
       fnConfig?.idleTimeout ?? this.#serverOptions.idleTimeout;
     const healthCheckConfig = this.#resolveHealthCheckConfig();
 
+    const backgroundTaskTimeout =
+      fnConfig?.backgroundTaskTimeout ??
+      this.#serverOptions.backgroundTaskTimeout ??
+      30_000;
+    const backgroundTaskKeepsAlive =
+      fnConfig?.backgroundTaskKeepsAlive ??
+      this.#serverOptions.backgroundTaskKeepsAlive ??
+      true;
+
     manager = new WorkerLifecycleManager({
       functionName: name,
       minWorkers: finalMin,
@@ -320,6 +329,8 @@ export class WorkerPool {
       onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
       websocketKeepsAlive:
         fnConfig?.websocketKeepsAlive ?? this.#serverOptions.websocketKeepsAlive,
+      backgroundTaskKeepsAlive,
+      backgroundTaskTimeout,
       onNeedSpawn: (fnName) => {
         // Health check detected we're below minWorkers — spawn replacement
         this.getOrCreate(fnName).catch((err) => {
@@ -462,6 +473,23 @@ export class WorkerPool {
         userOptions.requestTimeout ?? this.#serverOptions.requestTimeout,
       workerMaxDuration:
         userOptions.workerMaxDuration ?? this.#serverOptions.workerMaxDuration,
+      onBackgroundTaskStarted: () => {
+        this.#managers.get(name)?.incrementBackgroundTasks(instanceId);
+      },
+      onBackgroundTaskComplete: () => {
+        this.#managers.get(name)?.decrementBackgroundTasks(instanceId);
+      },
     });
+  }
+
+  async gracefulTerminateAll(timeout?: number): Promise<void> {
+    this.#disposed = true;
+    const promises: Promise<void>[] = [];
+    for (const manager of this.#managers.values()) {
+      promises.push(manager.gracefulDispose(timeout));
+    }
+    await Promise.allSettled(promises);
+    this.#managers.clear();
+    this.#workerPromises.clear();
   }
 }
