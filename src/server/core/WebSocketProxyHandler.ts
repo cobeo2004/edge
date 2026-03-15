@@ -130,11 +130,13 @@ export class WebSocketProxyHandler {
     );
   }
 
-  canAcceptConnection(functionName: string, workerInstanceId: string): boolean {
-    return (
-      this.getConnectionCount(functionName, workerInstanceId) <
-      this.#options.maxWebSocketConnections
-    );
+  canAcceptConnection(
+    functionName: string,
+    workerInstanceId: string,
+    perWorkerLimit?: number
+  ): boolean {
+    const limit = perWorkerLimit ?? this.#options.maxWebSocketConnections;
+    return this.getConnectionCount(functionName, workerInstanceId) < limit;
   }
 
   emitError(functionName: string, connectionId: string, error: Error): void {

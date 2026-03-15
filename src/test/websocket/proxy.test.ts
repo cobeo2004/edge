@@ -173,6 +173,39 @@ describe("WebSocketProxyHandler", () => {
     });
   });
 
+  describe("per-worker limit override", () => {
+    it("respects per-worker limit override", () => {
+      const handler = new WebSocketProxyHandler({
+        maxWebSocketConnections: 100,
+      });
+      handler.addConnection("fn", "w1", "c1");
+      handler.addConnection("fn", "w1", "c2");
+
+      // With per-worker limit of 2, should reject
+      expect(handler.canAcceptConnection("fn", "w1", 2)).toBe(false);
+
+      // With per-worker limit of 3, should accept
+      expect(handler.canAcceptConnection("fn", "w1", 3)).toBe(true);
+
+      // Without override, uses global default (100), should accept
+      expect(handler.canAcceptConnection("fn", "w1")).toBe(true);
+    });
+
+    it("function A at limit rejects while function B still accepts", () => {
+      const handler = new WebSocketProxyHandler({
+        maxWebSocketConnections: 100,
+      });
+      handler.addConnection("fnA", "wA", "c1");
+      handler.addConnection("fnA", "wA", "c2");
+      handler.addConnection("fnB", "wB", "c3");
+
+      // fnA at per-worker limit of 2
+      expect(handler.canAcceptConnection("fnA", "wA", 2)).toBe(false);
+      // fnB at 1 connection, per-worker limit of 5 — still accepts
+      expect(handler.canAcceptConnection("fnB", "wB", 5)).toBe(true);
+    });
+  });
+
   describe("generateConnectionId", () => {
     it("should return unique UUIDs", () => {
       const id1 = handler.generateConnectionId();
