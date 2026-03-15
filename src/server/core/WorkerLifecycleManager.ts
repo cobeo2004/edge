@@ -258,7 +258,10 @@ export class WorkerLifecycleManager {
       return;
     }
     // Don't start idle timer if background tasks are keeping the worker alive
-    if (this.#backgroundTaskKeepsAlive && this.getBackgroundTaskCount(instance.id) > 0) {
+    if (
+      this.#backgroundTaskKeepsAlive &&
+      this.getBackgroundTaskCount(instance.id) > 0
+    ) {
       return;
     }
     this.#clearIdleTimer(instance);
@@ -582,8 +585,7 @@ export class WorkerLifecycleManager {
   }
 
   async gracefulDispose(timeout?: number): Promise<void> {
-    const effectiveTimeout =
-      timeout ?? this.#backgroundTaskTimeout ?? 30_000;
+    const effectiveTimeout = timeout ?? this.#backgroundTaskTimeout ?? 30_000;
 
     const drainPromises = this.#instances
       .filter((i) => this.getBackgroundTaskCount(i.id) > 0)
@@ -596,10 +598,7 @@ export class WorkerLifecycleManager {
     this.dispose();
   }
 
-  #waitForBackgroundTasks(
-    instanceId: string,
-    timeout: number
-  ): Promise<void> {
+  #waitForBackgroundTasks(instanceId: string, timeout: number): Promise<void> {
     return new Promise<void>((resolve) => {
       if (this.getBackgroundTaskCount(instanceId) === 0) {
         resolve();

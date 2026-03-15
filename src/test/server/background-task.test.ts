@@ -104,10 +104,7 @@ describe("Background Tasks - Server", () => {
 
     // Worker should still be responsive after rejected bg task
     await new Promise<void>((resolve) => setTimeout(resolve, 500));
-    const response2 = await httpRequest(
-      server.port,
-      "/background-task-error/"
-    );
+    const response2 = await httpRequest(server.port, "/background-task-error/");
     expect(response2.status).toBe(200);
   }, 10_000);
 

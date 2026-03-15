@@ -328,7 +328,8 @@ export class WorkerPool {
       onFunctionReady: this.#serverOptions.onFunctionReady,
       onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
       websocketKeepsAlive:
-        fnConfig?.websocketKeepsAlive ?? this.#serverOptions.websocketKeepsAlive,
+        fnConfig?.websocketKeepsAlive ??
+        this.#serverOptions.websocketKeepsAlive,
       backgroundTaskKeepsAlive,
       backgroundTaskTimeout,
       onNeedSpawn: (fnName) => {

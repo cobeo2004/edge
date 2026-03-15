@@ -18,17 +18,21 @@ function textRequest(
   url: string
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = worker.request(`http://localhost${url}`, {}, (resp: IncomingMessage) => {
-      const chunks: Buffer[] = [];
-      resp.on("error", reject);
-      resp.on("data", (chunk: Buffer) => chunks.push(chunk));
-      resp.on("end", () => {
-        resolve({
-          status: resp.statusCode ?? 0,
-          body: Buffer.concat(chunks).toString(),
+    const req = worker.request(
+      `http://localhost${url}`,
+      {},
+      (resp: IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        resp.on("error", reject);
+        resp.on("data", (chunk: Buffer) => chunks.push(chunk));
+        resp.on("end", () => {
+          resolve({
+            status: resp.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString(),
+          });
         });
-      });
-    });
+      }
+    );
     req.on("error", reject);
     req.end();
   });
