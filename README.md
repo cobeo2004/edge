@@ -21,6 +21,7 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 - [Idle Timeout (Cold/Warm Lifecycle)](#idle-timeout-coldwarm-lifecycle)
 - [Worker Pool & Concurrency](#worker-pool--concurrency)
 - [WebSocket Support](#websocket-support)
+- [Background Tasks](#background-tasks)
 - [Configuration](#configuration)
 - [Logging](#logging)
 - [Shared Folders](#shared-folders)
@@ -524,7 +525,7 @@ const server = new EdgeFunctionServer({
 
 ### Per-function configuration (`function.json`)
 
-Each function directory can contain a `function.json` that declares its permission profile, auth settings, idle timeout, and WebSocket settings:
+Each function directory can contain a `function.json` that declares its permission profile, auth settings, idle timeout, WebSocket settings, and background task settings:
 
 ```
 functions/
@@ -972,6 +973,74 @@ flowchart LR
 
 When `server.stop()` is called, tracked WebSocket connections are cleaned up and workers are terminated. In raw splice mode (Node.js), both client and worker sockets are destroyed. In relay mode (Bun/Deno), host-side WebSockets are closed with code 1001 (Going Away).
 
+## Background Tasks
+
+Edge functions can run background work that outlives the HTTP response using `EdgeRuntime.waitUntil()` — compatible with Supabase Edge Functions.
+
+### Deno function code
+
+Use the global `EdgeRuntime.waitUntil()` to register promises that should complete after the response is sent:
+
+```ts
+// functions/analytics/index.ts
+Deno.serve(async (req) => {
+  const data = await req.json();
+
+  // Fire-and-forget: response returns immediately,
+  // background task continues running
+  EdgeRuntime.waitUntil(
+    fetch("https://analytics.example.com/events", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
+  );
+
+  return new Response("accepted", { status: 202 });
+});
+```
+
+Multiple `waitUntil()` calls are supported — each adds to the set of tracked promises. Rejected promises are logged to stderr but do not crash the worker.
+
+### Server configuration
+
+```ts
+const server = new EdgeFunctionServer({
+  functionsDir: "./functions",
+  port: 3000,
+  // Time allowed for background tasks after response (default: 30s)
+  backgroundTaskTimeout: 30_000,
+  // Pending background tasks prevent idle timeout (default: true)
+  backgroundTaskKeepsAlive: true,
+});
+```
+
+### Per-function overrides
+
+Override background task settings per function via `function.json`:
+
+```json
+{
+  "backgroundTaskTimeout": 60000,
+  "backgroundTaskKeepsAlive": true
+}
+```
+
+### How it works
+
+1. The bootstrap layer exposes `EdgeRuntime.waitUntil(promise)` as a global before user code runs.
+2. When a promise is registered, the bootstrap sends a structured message to the host via stderr.
+3. The host tracks pending background tasks per worker instance.
+4. The idle timeout timer is paused while background tasks are pending (when `backgroundTaskKeepsAlive` is `true`).
+5. If background tasks exceed `backgroundTaskTimeout` after the last response, the worker is terminated.
+
+### Timeout behavior
+
+The background task timeout starts when `activeRequests` drops to 0 while background tasks are still pending. If a new request arrives, the timer resets. When the timeout fires, the worker is terminated (consistent with `workerMaxDuration` behavior) and the lifecycle manager respawns if below `minWorkers`.
+
+### Graceful shutdown
+
+When `server.stop()` is called, the server waits for pending background tasks to drain (up to `backgroundTaskTimeout`) before terminating workers. This ensures in-flight background work completes during normal shutdown.
+
 ## Configuration
 
 All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
@@ -1037,6 +1106,8 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `onWebSocketConnect`       | `(functionName: string, connectionId: string) => void` | Called when a WebSocket connection is established                                              |
 | `onWebSocketClose`         | `(functionName: string, connectionId: string, code: number, reason: string) => void` | Called when a WebSocket connection is closed                    |
 | `onWebSocketError`         | `(functionName: string, connectionId: string, error: Error) => void` | Called when a WebSocket connection errors                                        |
+| `backgroundTaskTimeout`    | `number`                                                             | Max time (ms) to wait for background tasks after last response (default: `30000`). Overridable per function via `function.json`. |
+| `backgroundTaskKeepsAlive` | `boolean`                                                            | Pending background tasks prevent idle timeout (default: `true`). Overridable per function via `function.json`. |
 
 ## Logging
 
