@@ -58,6 +58,14 @@ export async function loadFunctionConfig(
       config.eagerSpawn = parsed.eagerSpawn;
     }
 
+    if (
+      typeof parsed.maxWebSocketConnections === "number" &&
+      Number.isInteger(parsed.maxWebSocketConnections) &&
+      parsed.maxWebSocketConnections >= 1
+    ) {
+      config.maxWebSocketConnections = parsed.maxWebSocketConnections;
+    }
+
     return config;
   } catch (err) {
     // Only call onError for parse errors, not missing files

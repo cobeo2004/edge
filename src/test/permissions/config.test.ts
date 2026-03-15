@@ -48,6 +48,51 @@ describe("loadFunctionConfig", () => {
     expect(config.auth).toBe(false);
   });
 
+  it("parses maxWebSocketConnections", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ maxWebSocketConnections: 50 })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.maxWebSocketConnections).toBe(50);
+  });
+
+  it("ignores non-integer maxWebSocketConnections", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ maxWebSocketConnections: 0.5 })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.maxWebSocketConnections).toBeUndefined();
+  });
+
+  it("ignores maxWebSocketConnections < 1", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ maxWebSocketConnections: 0 })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.maxWebSocketConnections).toBeUndefined();
+  });
+
+  it("ignores negative maxWebSocketConnections", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ maxWebSocketConnections: -1 })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.maxWebSocketConnections).toBeUndefined();
+  });
+
+  it("ignores string maxWebSocketConnections", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ maxWebSocketConnections: "50" })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.maxWebSocketConnections).toBeUndefined();
+  });
+
   it("returns empty config for invalid JSON", async () => {
     await fsp.writeFile(path.join(tmpDir, "function.json"), "not json");
     const config = await loadFunctionConfig(tmpDir);
