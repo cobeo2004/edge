@@ -22,7 +22,7 @@ const __dirname = path.dirname(__filename);
 
 const SERVE_BOOTSTRAP_PATH = path.resolve(
   __dirname,
-  "../../../deno-bootstrap/serve.ts"
+  "../../../deno-bootstrap/serve.ts",
 );
 
 export interface WorkerPoolOptions {
@@ -77,7 +77,7 @@ export class WorkerPool {
               !this.#wsProxyHandler.canAcceptConnection(
                 name,
                 result.instance.id,
-                perWorkerLimit
+                perWorkerLimit,
               )
             ) {
               continue;
@@ -119,14 +119,14 @@ export class WorkerPool {
     const fallback = manager.acquire();
     if (fallback.kind === "instance") return fallback.instance;
     throw new Error(
-      `Failed to acquire worker for "${name}" after ${MAX_RETRIES} retries`
+      `Failed to acquire worker for "${name}" after ${MAX_RETRIES} retries`,
     );
   }
 
   async #spawnAndRegister(
     name: string,
     id: string,
-    manager: WorkerLifecycleManager
+    manager: WorkerLifecycleManager,
   ): Promise<WorkerInstance> {
     const entrypoint = this.#registry.getEntrypoint(name);
     if (!entrypoint) {
@@ -151,7 +151,7 @@ export class WorkerPool {
     const added = manager.addInstance(instance, expectedGeneration);
     if (!added) {
       throw new Error(
-        `Stale spawn for "${name}": generation changed during spawn`
+        `Stale spawn for "${name}": generation changed during spawn`,
       );
     }
     return instance;
@@ -171,10 +171,10 @@ export class WorkerPool {
     if (this.#registry.hasFunction(name)) {
       const count = Math.min(
         Math.max(manager.minWorkers, 1),
-        manager.maxWorkers
+        manager.maxWorkers,
       );
       await Promise.all(
-        Array.from({ length: count }, () => this.getOrCreate(name))
+        Array.from({ length: count }, () => this.getOrCreate(name)),
       );
     }
   }
@@ -189,6 +189,7 @@ export class WorkerPool {
         activeRequests: 0,
         restartCount: 0,
         instances: [],
+        totalBackgroundTasks: 0,
       };
     }
     return manager.getStats();
@@ -287,19 +288,19 @@ export class WorkerPool {
     let validMax = Number.isInteger(rawMax) ? rawMax : Math.floor(rawMax);
     if (rawMin < 0) {
       console.warn(
-        `[edge] "${name}": minWorkers (${rawMin}) < 0, defaulting to 0`
+        `[edge] "${name}": minWorkers (${rawMin}) < 0, defaulting to 0`,
       );
       validMin = 0;
     }
     if (rawMax < 1) {
       console.warn(
-        `[edge] "${name}": maxWorkers (${rawMax}) < 1, defaulting to 1`
+        `[edge] "${name}": maxWorkers (${rawMax}) < 1, defaulting to 1`,
       );
       validMax = 1;
     }
     if (validMin > validMax) {
       console.warn(
-        `[edge] "${name}": minWorkers (${validMin}) > maxWorkers (${validMax}), clamping minWorkers to ${validMax}`
+        `[edge] "${name}": minWorkers (${validMin}) > maxWorkers (${validMax}), clamping minWorkers to ${validMax}`,
       );
       validMin = validMax;
     }
@@ -370,7 +371,7 @@ export class WorkerPool {
   async #spawnWorker(
     name: string,
     instanceId: string,
-    entrypoint: string
+    entrypoint: string,
   ): Promise<DenoHTTPWorker> {
     const userOptions = this.#serverOptions.workerOptions ?? {};
 
@@ -398,7 +399,7 @@ export class WorkerPool {
         runFlags.includes("--allow-read") || runFlags.includes("--allow-all");
       if (!hasFullRead) {
         const existingIdx = runFlags.findIndex((f) =>
-          f.startsWith("--allow-read=")
+          f.startsWith("--allow-read="),
         );
         if (existingIdx !== -1) {
           runFlags[existingIdx] += `,${sharedPaths}`;
