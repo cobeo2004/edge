@@ -66,6 +66,10 @@ export async function loadFunctionConfig(
       config.maxWebSocketConnections = parsed.maxWebSocketConnections;
     }
 
+    if (typeof parsed.websocketKeepsAlive === "boolean") {
+      config.websocketKeepsAlive = parsed.websocketKeepsAlive;
+    }
+
     return config;
   } catch (err) {
     // Only call onError for parse errors, not missing files

@@ -93,6 +93,46 @@ describe("loadFunctionConfig", () => {
     expect(config.maxWebSocketConnections).toBeUndefined();
   });
 
+  it("parses websocketKeepsAlive true", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ websocketKeepsAlive: true })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.websocketKeepsAlive).toBe(true);
+  });
+
+  it("parses websocketKeepsAlive false", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ websocketKeepsAlive: false })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.websocketKeepsAlive).toBe(false);
+  });
+
+  it("ignores non-boolean websocketKeepsAlive", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({ websocketKeepsAlive: "true" })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.websocketKeepsAlive).toBeUndefined();
+  });
+
+  it("parses both WebSocket fields together", async () => {
+    await fsp.writeFile(
+      path.join(tmpDir, "function.json"),
+      JSON.stringify({
+        maxWebSocketConnections: 25,
+        websocketKeepsAlive: false,
+      })
+    );
+    const config = await loadFunctionConfig(tmpDir);
+    expect(config.maxWebSocketConnections).toBe(25);
+    expect(config.websocketKeepsAlive).toBe(false);
+  });
+
   it("returns empty config for invalid JSON", async () => {
     await fsp.writeFile(path.join(tmpDir, "function.json"), "not json");
     const config = await loadFunctionConfig(tmpDir);
