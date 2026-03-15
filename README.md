@@ -977,6 +977,29 @@ When `server.stop()` is called, tracked WebSocket connections are cleaned up and
 
 Edge functions can run background work that outlives the HTTP response using `EdgeRuntime.waitUntil()` — compatible with Supabase Edge Functions.
 
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server as EdgeFunctionServer
+    participant Worker as Deno Worker
+    participant External as External Service
+
+    Client->>Server: POST /analytics
+    Server->>Worker: Forward request over Unix socket
+    Worker->>Worker: EdgeRuntime.waitUntil(fetch(...))
+    Worker-->>Server: 202 Accepted
+    Server-->>Client: 202 Accepted
+    Note over Client: Client done ✓
+
+    rect rgb(240, 248, 255)
+        Note over Worker,External: Background task continues
+        Worker->>External: POST analytics event
+        External-->>Worker: 200 OK
+        Worker->>Server: stderr: \x00BG:{"event":"complete"}
+        Note over Server: Task count → 0<br/>Idle timer resumes
+    end
+```
+
 ### Deno function code
 
 Use the global `EdgeRuntime.waitUntil()` to register promises that should complete after the response is sent:
@@ -1032,6 +1055,30 @@ Override background task settings per function via `function.json`:
 3. The host tracks pending background tasks per worker instance.
 4. The idle timeout timer is paused while background tasks are pending (when `backgroundTaskKeepsAlive` is `true`).
 5. If background tasks exceed `backgroundTaskTimeout` after the last response, the worker is terminated.
+
+### Timeout and idle timer lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: Worker spawned
+
+    Idle --> Active: Request arrives
+    Active --> Active: More requests
+
+    Active --> BgTaskRunning: Response sent,<br/>bg tasks pending
+    BgTaskRunning --> BgTaskRunning: New request<br/>(timeout resets)
+
+    BgTaskRunning --> Idle: All bg tasks complete<br/>(idle timer starts)
+    BgTaskRunning --> Terminated: backgroundTaskTimeout<br/>exceeded
+
+    Idle --> Terminated: idleTimeout exceeded
+    Terminated --> [*]
+
+    note right of BgTaskRunning
+        Idle timer paused when
+        backgroundTaskKeepsAlive = true
+    end note
+```
 
 ### Timeout behavior
 
