@@ -67,11 +67,21 @@ export class WorkerPool {
       switch (result.kind) {
         case "instance":
           // Skip instances at WebSocket capacity — try to scale up or wait
-          if (
-            this.#wsProxyHandler &&
-            !this.#wsProxyHandler.canAcceptConnection(name, result.instance.id)
-          ) {
-            continue;
+          if (this.#wsProxyHandler) {
+            const fnCfg = this.#registry.getFunctionConfig(name);
+            const perWorkerLimit =
+              fnCfg?.maxWebSocketConnections ??
+              this.#serverOptions.maxWebSocketConnections ??
+              100;
+            if (
+              !this.#wsProxyHandler.canAcceptConnection(
+                name,
+                result.instance.id,
+                perWorkerLimit
+              )
+            ) {
+              continue;
+            }
           }
           return result.instance;
 
@@ -308,7 +318,8 @@ export class WorkerPool {
       onFunctionCold: this.#serverOptions.onFunctionCold,
       onFunctionReady: this.#serverOptions.onFunctionReady,
       onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
-      websocketKeepsAlive: this.#serverOptions.websocketKeepsAlive,
+      websocketKeepsAlive:
+        fnConfig?.websocketKeepsAlive ?? this.#serverOptions.websocketKeepsAlive,
       onNeedSpawn: (fnName) => {
         // Health check detected we're below minWorkers — spawn replacement
         this.getOrCreate(fnName).catch((err) => {

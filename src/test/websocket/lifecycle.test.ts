@@ -74,5 +74,17 @@ describe("WorkerLifecycleManager — WebSocket awareness", () => {
       mgr.incrementWebSocketCount("inst-1");
       expect(mgr.getWebSocketCount("inst-1")).toBe(1);
     });
+
+    it("per-function false overrides server-level true (default)", () => {
+      const mgr = createManager({ websocketKeepsAlive: false });
+      mgr.incrementWebSocketCount("inst-1");
+      expect(mgr.getWebSocketCount("inst-1")).toBe(1);
+    });
+
+    it("per-function true overrides server-level false", () => {
+      const mgr = createManager({ websocketKeepsAlive: true });
+      mgr.incrementWebSocketCount("inst-1");
+      expect(mgr.getWebSocketCount("inst-1")).toBe(1);
+    });
   });
 });
