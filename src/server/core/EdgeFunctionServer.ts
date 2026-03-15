@@ -39,6 +39,7 @@ export class EdgeFunctionServer {
     });
     this.#wsProxyHandler = new WebSocketProxyHandler({
       maxWebSocketConnections: options.maxWebSocketConnections ?? 100,
+      globalMaxWebSocketConnections: options.globalMaxWebSocketConnections,
       onWebSocketConnect: options.onWebSocketConnect,
       onWebSocketClose: options.onWebSocketClose,
       onWebSocketError: options.onWebSocketError,
