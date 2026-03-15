@@ -71,6 +71,9 @@ describe("EdgeFunctionServer – lifecycle", { timeout: 15_000 }, () => {
     await server.start();
 
     expect(readyFunctions.sort()).toEqual([
+      "background-task",
+      "background-task-error",
+      "background-task-slow",
       "eager-override",
       "echo",
       "env-test",

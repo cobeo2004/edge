@@ -147,15 +147,17 @@ WebSocket proxy support across all three server adapters:
 
 ### Background Tasks
 
-**Status:** Not started
+**Status:** Done
 
 Supabase supports long-running background tasks that outlive the HTTP response (e.g., `EdgeRuntime.waitUntil()`).
 
-**Planned:**
-- `waitUntil`-style API in the bootstrap layer
-- Track in-flight background tasks per worker
-- Graceful shutdown waits for background tasks to complete
-- Configurable background task timeout
+- `EdgeRuntime.waitUntil(promise)` global API in both bootstrap layers
+- Host notification via structured stderr messages (`\x00BG:` prefix)
+- Background task count tracking per worker instance
+- `backgroundTaskTimeout` option (global + per-function via `function.json`, default: 30s)
+- `backgroundTaskKeepsAlive` option (global + per-function, default: true) — pauses idle timeout while tasks pending
+- Graceful shutdown waits for background tasks to drain
+- Worker terminated on background task timeout (consistent with `workerMaxDuration`)
 
 ---
 

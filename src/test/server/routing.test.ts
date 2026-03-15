@@ -21,6 +21,9 @@ describe("EdgeFunctionServer – routing", { timeout: 15_000 }, () => {
     await server.start();
     const fns = server.listFunctions();
     expect(fns).toEqual([
+      "background-task",
+      "background-task-error",
+      "background-task-slow",
       "eager-override",
       "echo",
       "env-test",
