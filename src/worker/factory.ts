@@ -215,7 +215,7 @@ export const newDenoHTTPWorker = async (
           reject(
             new EarlyExitDenoHTTPWorkerError(
               "Deno exited before being ready",
-              stderr,
+              stderr ?? "",
               stdout,
               code,
               signal
