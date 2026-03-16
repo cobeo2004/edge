@@ -70,6 +70,17 @@ export async function loadFunctionConfig(
       config.websocketKeepsAlive = parsed.websocketKeepsAlive;
     }
 
+    if (
+      typeof parsed.backgroundTaskTimeout === "number" &&
+      parsed.backgroundTaskTimeout > 0
+    ) {
+      config.backgroundTaskTimeout = parsed.backgroundTaskTimeout;
+    }
+
+    if (typeof parsed.backgroundTaskKeepsAlive === "boolean") {
+      config.backgroundTaskKeepsAlive = parsed.backgroundTaskKeepsAlive;
+    }
+
     return config;
   } catch (err) {
     // Only call onError for parse errors, not missing files
