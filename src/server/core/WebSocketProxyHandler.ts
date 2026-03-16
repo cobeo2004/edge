@@ -65,10 +65,14 @@ export class WebSocketProxyHandler {
     if (!funcMap.has(workerInstanceId)) {
       funcMap.set(workerInstanceId, new Set());
     }
-    funcMap.get(workerInstanceId)!.add(connectionId);
-    this.#totalConnections++;
-    this.#onConnectionAdded?.(functionName, workerInstanceId);
-    this.#options.onWebSocketConnect?.(functionName, connectionId);
+    const workerSet = funcMap.get(workerInstanceId)!;
+    const sizeBefore = workerSet.size;
+    workerSet.add(connectionId);
+    if (workerSet.size !== sizeBefore) {
+      this.#totalConnections++;
+      this.#onConnectionAdded?.(functionName, workerInstanceId);
+      this.#options.onWebSocketConnect?.(functionName, connectionId);
+    }
   }
 
   removeConnection(
@@ -82,7 +86,9 @@ export class WebSocketProxyHandler {
     if (!funcMap) return;
     const workerSet = funcMap.get(workerInstanceId);
     if (!workerSet) return;
-    workerSet.delete(connectionId);
+    if (workerSet.has(connectionId)) {
+      workerSet.delete(connectionId);
+    }
     this.#totalConnections--;
     if (workerSet.size === 0) funcMap.delete(workerInstanceId);
     if (funcMap.size === 0) this.#connections.delete(functionName);
