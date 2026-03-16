@@ -201,10 +201,16 @@ export const newDenoHTTPWorker = async (
       let running = false;
       let exited = false;
       let worker: DenoHTTPWorker | undefined;
+      // Buffer stderr lines so early exit errors still have diagnostic info,
+      // since the raw stderr stream is consumed by the 'data' handler below.
+      const earlyStderrLines: string[] = [];
       process.on("exit", (code: number, signal: string) => {
         exited = true;
         if (!running) {
-          const stderr = process.stderr?.read()?.toString();
+          const stderr =
+            earlyStderrLines.length > 0
+              ? earlyStderrLines.join("\n")
+              : undefined;
           const stdout = process.stdout?.read()?.toString();
           reject(
             new EarlyExitDenoHTTPWorkerError(
@@ -267,6 +273,9 @@ export const newDenoHTTPWorker = async (
             }
           } else {
             passthroughLines.push(line);
+            if (!running) {
+              earlyStderrLines.push(line);
+            }
             if (shouldLog(effectiveLogLevel, "warn")) {
               logHandler("warn", "stderr", line);
             }
@@ -277,7 +286,43 @@ export const newDenoHTTPWorker = async (
           stderrProxy.write(`${passthroughLines.join("\n")}\n`);
         }
       });
-      stderr.on("end", () => stderrProxy.end());
+      stderr.on("end", () => {
+        // Flush any remaining data in the line buffer (e.g. final line
+        // without trailing newline).
+        if (bgLineBuffer.length > 0) {
+          const remaining = bgLineBuffer;
+          bgLineBuffer = "";
+          if (remaining.startsWith("\x00BG:")) {
+            try {
+              const payload = JSON.parse(remaining.slice(4));
+              if (payload.event === "started" || payload.event === "complete") {
+                if (bgWorkerRef) {
+                  if (payload.event === "started") {
+                    bgWorkerRef.incrementBackgroundTasks();
+                    _options.onBackgroundTaskStarted?.();
+                  } else {
+                    bgWorkerRef.decrementBackgroundTasks();
+                    _options.onBackgroundTaskComplete?.();
+                  }
+                } else {
+                  bgEarlyQueue.push(payload);
+                }
+              }
+            } catch {
+              // Ignore malformed BG messages
+            }
+          } else {
+            if (!running) {
+              earlyStderrLines.push(remaining);
+            }
+            if (shouldLog(effectiveLogLevel, "warn")) {
+              logHandler("warn", "stderr", remaining);
+            }
+            stderrProxy.write(`${remaining}\n`);
+          }
+        }
+        stderrProxy.end();
+      });
 
       // Wait for the socket file to be created by the Deno process.
       for (;;) {
