@@ -1,10 +1,14 @@
 // --- Background task support ---
+// NOTE: This code is intentionally duplicated in serve.ts. The bootstrap files
+// are loaded as data: URIs so relative imports between them don't resolve.
 const _bgPendingTasks = new Set<Promise<unknown>>();
 const _bgEncoder = new TextEncoder();
 
 function _bgNotifyHost(event: string): void {
   try {
-    Deno.stderr.writeSync(_bgEncoder.encode(`\x00BG:{"event":"${event}"}\n`));
+    Deno.stderr.writeSync(
+      _bgEncoder.encode(`\x00BG:${JSON.stringify({ event })}\n`)
+    );
   } catch {
     // Ignore write errors (process shutting down)
   }
