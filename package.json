@@ -1,6 +1,6 @@
 {
   "name": "@cobeo2004/edge",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Securely spawn Deno workers from Node.js",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
