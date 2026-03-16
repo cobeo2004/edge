@@ -249,10 +249,7 @@ export const newDenoHTTPWorker = async (
           if (line.startsWith("\x00BG:")) {
             try {
               const payload = JSON.parse(line.slice(4));
-              if (
-                payload.event === "started" ||
-                payload.event === "complete"
-              ) {
+              if (payload.event === "started" || payload.event === "complete") {
                 if (bgWorkerRef) {
                   if (payload.event === "started") {
                     bgWorkerRef.incrementBackgroundTasks();
@@ -277,7 +274,7 @@ export const newDenoHTTPWorker = async (
         }
 
         if (passthroughLines.length > 0) {
-          stderrProxy.write(passthroughLines.join("\n") + "\n");
+          stderrProxy.write(`${passthroughLines.join("\n")}\n`);
         }
       });
       stderr.on("end", () => stderrProxy.end());
