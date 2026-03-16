@@ -88,8 +88,8 @@ export class WebSocketProxyHandler {
     if (!workerSet) return;
     if (workerSet.has(connectionId)) {
       workerSet.delete(connectionId);
+      this.#totalConnections--;
     }
-    this.#totalConnections--;
     if (workerSet.size === 0) funcMap.delete(workerInstanceId);
     if (funcMap.size === 0) this.#connections.delete(functionName);
     const cb = this.#cleanupCallbacks.get(connectionId);
