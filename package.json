@@ -1,7 +1,7 @@
 {
   "name": "@cobeo2004/edge",
-  "version": "0.0.8",
-  "description": "Securely spawn Deno workers from Node.js",
+  "version": "0.0.9",
+  "description": "Deno Edge Runtime for Node.js, written in TypeScript on top of Deno HTTP Worker",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {

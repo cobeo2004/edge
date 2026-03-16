@@ -58,6 +58,29 @@ export async function loadFunctionConfig(
       config.eagerSpawn = parsed.eagerSpawn;
     }
 
+    if (
+      typeof parsed.maxWebSocketConnections === "number" &&
+      Number.isInteger(parsed.maxWebSocketConnections) &&
+      parsed.maxWebSocketConnections >= 1
+    ) {
+      config.maxWebSocketConnections = parsed.maxWebSocketConnections;
+    }
+
+    if (typeof parsed.websocketKeepsAlive === "boolean") {
+      config.websocketKeepsAlive = parsed.websocketKeepsAlive;
+    }
+
+    if (
+      typeof parsed.backgroundTaskTimeout === "number" &&
+      parsed.backgroundTaskTimeout > 0
+    ) {
+      config.backgroundTaskTimeout = parsed.backgroundTaskTimeout;
+    }
+
+    if (typeof parsed.backgroundTaskKeepsAlive === "boolean") {
+      config.backgroundTaskKeepsAlive = parsed.backgroundTaskKeepsAlive;
+    }
+
     return config;
   } catch (err) {
     // Only call onError for parse errors, not missing files

@@ -1,6 +1,6 @@
 import path, { resolve } from "node:path";
 import { spawn } from "node:child_process";
-import type { Readable } from "node:stream";
+import { type Readable, PassThrough } from "node:stream";
 import readline from "node:readline";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -201,15 +201,21 @@ export const newDenoHTTPWorker = async (
       let running = false;
       let exited = false;
       let worker: DenoHTTPWorker | undefined;
+      // Buffer stderr lines so early exit errors still have diagnostic info,
+      // since the raw stderr stream is consumed by the 'data' handler below.
+      const earlyStderrLines: string[] = [];
       process.on("exit", (code: number, signal: string) => {
         exited = true;
         if (!running) {
-          const stderr = process.stderr?.read()?.toString();
+          const stderr =
+            earlyStderrLines.length > 0
+              ? earlyStderrLines.join("\n")
+              : undefined;
           const stdout = process.stdout?.read()?.toString();
           reject(
             new EarlyExitDenoHTTPWorkerError(
               "Deno exited before being ready",
-              stderr,
+              stderr ?? "",
               stdout,
               code,
               signal
@@ -229,11 +235,94 @@ export const newDenoHTTPWorker = async (
           logHandler("info", "stdout", line);
         });
       }
-      if (shouldLog(effectiveLogLevel, "warn")) {
-        readline.createInterface({ input: stderr }).on("line", (line) => {
-          logHandler("warn", "stderr", line);
-        });
-      }
+      // Always parse stderr for background task control messages (\x00BG:).
+      // We consume the raw stderr stream and forward non-BG data to a proxy
+      // stream so worker.stderr.read() still works for consumers.
+      let bgWorkerRef: DenoHTTPWorkerImpl | undefined;
+      const bgEarlyQueue: Array<{ event: string }> = [];
+      const stderrProxy = new PassThrough();
+      let bgLineBuffer = "";
+
+      stderr.on("data", (chunk: Buffer) => {
+        bgLineBuffer += chunk.toString();
+        let newlineIdx: number;
+        const passthroughLines: string[] = [];
+
+        while ((newlineIdx = bgLineBuffer.indexOf("\n")) !== -1) {
+          const line = bgLineBuffer.slice(0, newlineIdx);
+          bgLineBuffer = bgLineBuffer.slice(newlineIdx + 1);
+
+          if (line.startsWith("\x00BG:")) {
+            try {
+              const payload = JSON.parse(line.slice(4));
+              if (payload.event === "started" || payload.event === "complete") {
+                if (bgWorkerRef) {
+                  if (payload.event === "started") {
+                    bgWorkerRef.incrementBackgroundTasks();
+                    _options.onBackgroundTaskStarted?.();
+                  } else {
+                    bgWorkerRef.decrementBackgroundTasks();
+                    _options.onBackgroundTaskComplete?.();
+                  }
+                } else {
+                  bgEarlyQueue.push(payload);
+                }
+              }
+            } catch {
+              // Ignore malformed BG messages
+            }
+          } else {
+            passthroughLines.push(line);
+            if (!running) {
+              earlyStderrLines.push(line);
+            }
+            if (shouldLog(effectiveLogLevel, "warn")) {
+              logHandler("warn", "stderr", line);
+            }
+          }
+        }
+
+        if (passthroughLines.length > 0) {
+          stderrProxy.write(`${passthroughLines.join("\n")}\n`);
+        }
+      });
+      stderr.on("end", () => {
+        // Flush any remaining data in the line buffer (e.g. final line
+        // without trailing newline).
+        if (bgLineBuffer.length > 0) {
+          const remaining = bgLineBuffer;
+          bgLineBuffer = "";
+          if (remaining.startsWith("\x00BG:")) {
+            try {
+              const payload = JSON.parse(remaining.slice(4));
+              if (payload.event === "started" || payload.event === "complete") {
+                if (bgWorkerRef) {
+                  if (payload.event === "started") {
+                    bgWorkerRef.incrementBackgroundTasks();
+                    _options.onBackgroundTaskStarted?.();
+                  } else {
+                    bgWorkerRef.decrementBackgroundTasks();
+                    _options.onBackgroundTaskComplete?.();
+                  }
+                } else {
+                  bgEarlyQueue.push(payload);
+                }
+              }
+            } catch {
+              // Ignore malformed BG messages
+            }
+          } else {
+            if (!running) {
+              earlyStderrLines.push(remaining);
+            }
+            if (shouldLog(effectiveLogLevel, "warn")) {
+              logHandler("warn", "stderr", remaining);
+            }
+            stderrProxy.write(`${remaining}\n`);
+          }
+        }
+        stderrProxy.end();
+      });
 
       // Wait for the socket file to be created by the Deno process.
       for (;;) {
@@ -252,10 +341,22 @@ export const newDenoHTTPWorker = async (
         socketFile,
         process,
         stdout,
-        stderr,
+        stderr: stderrProxy,
         requestTimeout: _options.requestTimeout,
         workerMaxDuration: _options.workerMaxDuration,
       });
+      bgWorkerRef = worker as DenoHTTPWorkerImpl;
+      // Flush any BG messages that arrived before worker was constructed
+      for (const msg of bgEarlyQueue) {
+        if (msg.event === "started") {
+          bgWorkerRef.incrementBackgroundTasks();
+          _options.onBackgroundTaskStarted?.();
+        } else if (msg.event === "complete") {
+          bgWorkerRef.decrementBackgroundTasks();
+          _options.onBackgroundTaskComplete?.();
+        }
+      }
+      bgEarlyQueue.length = 0;
       running = true;
       await (worker as DenoHTTPWorkerImpl).warmRequest();
 

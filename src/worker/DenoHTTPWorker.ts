@@ -30,6 +30,9 @@ export interface DenoHTTPWorker {
 
   get socketPath(): string;
 
+  /** Number of pending background tasks */
+  get backgroundTaskCount(): number;
+
   get stdout(): Readable;
 
   get stderr(): Readable;
@@ -56,6 +59,7 @@ export class DenoHTTPWorkerImpl {
   #stderr: Readable;
   #stdout: Readable;
   #terminated = false;
+  #backgroundTaskCount = 0;
   #agent: http.Agent;
   #requestTimeout?: number;
   #maxDurationTimer?: ReturnType<typeof setTimeout>;
@@ -163,6 +167,18 @@ export class DenoHTTPWorkerImpl {
       req.on("error", reject);
       req.end();
     });
+  }
+
+  get backgroundTaskCount(): number {
+    return this.#backgroundTaskCount;
+  }
+
+  incrementBackgroundTasks(): void {
+    this.#backgroundTaskCount++;
+  }
+
+  decrementBackgroundTasks(): void {
+    this.#backgroundTaskCount = Math.max(0, this.#backgroundTaskCount - 1);
   }
 
   get socketPath(): string {

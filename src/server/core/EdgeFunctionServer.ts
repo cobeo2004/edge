@@ -39,6 +39,7 @@ export class EdgeFunctionServer {
     });
     this.#wsProxyHandler = new WebSocketProxyHandler({
       maxWebSocketConnections: options.maxWebSocketConnections ?? 100,
+      globalMaxWebSocketConnections: options.globalMaxWebSocketConnections,
       onWebSocketConnect: options.onWebSocketConnect,
       onWebSocketClose: options.onWebSocketClose,
       onWebSocketError: options.onWebSocketError,
@@ -277,7 +278,13 @@ export class EdgeFunctionServer {
     }
 
     this.#pool?.stopAllHealthChecks();
-    this.#pool?.terminateAll();
+
+    // Graceful shutdown: wait for background tasks to drain before terminating
+    if (this.#pool) {
+      await this.#pool.gracefulTerminateAll(
+        this.#options.backgroundTaskTimeout ?? 30_000
+      );
+    }
 
     // Clean up generated import map
     await this.#registry.cleanupImportMap();

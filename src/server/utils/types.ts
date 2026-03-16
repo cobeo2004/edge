@@ -100,6 +100,8 @@ export interface EdgeFunctionServerOptions {
   permissionProfiles?: Record<string, string[]>;
   /** Max WebSocket connections per worker instance (default: 100) */
   maxWebSocketConnections?: number;
+  /** Global cap on total WebSocket connections across all functions/workers. When not set, no global cap is enforced. */
+  globalMaxWebSocketConnections?: number;
   /** Whether active WebSocket connections prevent idle timeout and workerMaxDuration from killing the worker (default: true) */
   websocketKeepsAlive?: boolean;
   /** Called when a WebSocket connection is established */
@@ -117,4 +119,8 @@ export interface EdgeFunctionServerOptions {
     connectionId: string,
     error: Error
   ) => void;
+  /** Maximum time (ms) to wait for background tasks after last response. Default: 30000 */
+  backgroundTaskTimeout?: number;
+  /** Whether pending background tasks prevent idle timeout. Default: true */
+  backgroundTaskKeepsAlive?: boolean;
 }

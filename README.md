@@ -21,6 +21,7 @@ Securely spawn Deno HTTP workers from Node.js, Bun, or Deno over Unix sockets.
 - [Idle Timeout (Cold/Warm Lifecycle)](#idle-timeout-coldwarm-lifecycle)
 - [Worker Pool & Concurrency](#worker-pool--concurrency)
 - [WebSocket Support](#websocket-support)
+- [Background Tasks](#background-tasks)
 - [Configuration](#configuration)
 - [Logging](#logging)
 - [Shared Folders](#shared-folders)
@@ -524,7 +525,7 @@ const server = new EdgeFunctionServer({
 
 ### Per-function configuration (`function.json`)
 
-Each function directory can contain a `function.json` that declares its permission profile, auth settings, and idle timeout:
+Each function directory can contain a `function.json` that declares its permission profile, auth settings, idle timeout, WebSocket settings, and background task settings:
 
 ```
 functions/
@@ -791,10 +792,10 @@ flowchart TD
 
 ### Per-function overrides
 
-Override pool settings per function via `function.json`:
+Override pool and WebSocket settings per function via `function.json`:
 
 ```json
-{ "minWorkers": 2, "maxWorkers": 8, "eagerSpawn": true }
+{ "minWorkers": 2, "maxWorkers": 8, "eagerSpawn": true, "maxWebSocketConnections": 50, "websocketKeepsAlive": false }
 ```
 
 Per-function values take priority over server-level defaults.
@@ -885,6 +886,7 @@ const server = newEdgeFunctionServer({
   functionsDir: "/path/to/functions",
   port: 3000,
   maxWebSocketConnections: 100, // per worker instance (default: 100)
+  globalMaxWebSocketConnections: 500, // server-wide cap across all functions/workers (optional)
   websocketKeepsAlive: true, // WS connections prevent idle timeout (default: true)
   onWebSocketConnect: (functionName, connectionId) => {
     console.log(`WS connected: ${functionName} (${connectionId})`);
@@ -900,7 +902,21 @@ const server = newEdgeFunctionServer({
 
 ### Per-function configuration
 
-WebSocket settings (`maxWebSocketConnections`, `websocketKeepsAlive`) are currently configured at the server level only. Per-function overrides via `function.json` are planned for a future release.
+Override WebSocket settings per function via `function.json`:
+
+```json
+{
+  "maxWebSocketConnections": 50,
+  "websocketKeepsAlive": false
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `maxWebSocketConnections` | `number` | Max connections per worker instance for this function (default: server-level value or `100`) |
+| `websocketKeepsAlive` | `boolean` | Whether active connections prevent idle timeout for this function (default: server-level value or `true`) |
+
+Per-function values take priority over server-level defaults. The `globalMaxWebSocketConnections` server-wide cap is always enforced on top of per-function limits.
 
 ### Authentication
 
@@ -956,6 +972,121 @@ flowchart LR
 ### Graceful shutdown
 
 When `server.stop()` is called, tracked WebSocket connections are cleaned up and workers are terminated. In raw splice mode (Node.js), both client and worker sockets are destroyed. In relay mode (Bun/Deno), host-side WebSockets are closed with code 1001 (Going Away).
+
+## Background Tasks
+
+Edge functions can run background work that outlives the HTTP response using `EdgeRuntime.waitUntil()` — compatible with Supabase Edge Functions.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server as EdgeFunctionServer
+    participant Worker as Deno Worker
+    participant External as External Service
+
+    Client->>Server: POST /analytics
+    Server->>Worker: Forward request over Unix socket
+    Worker->>Worker: EdgeRuntime.waitUntil(fetch(...))
+    Worker-->>Server: 202 Accepted
+    Server-->>Client: 202 Accepted
+    Note over Client: Client done ✓
+
+    rect rgb(240, 248, 255)
+        Note over Worker,External: Background task continues
+        Worker->>External: POST analytics event
+        External-->>Worker: 200 OK
+        Worker->>Server: stderr: \x00BG:{"event":"complete"}
+        Note over Server: Task count → 0<br/>Idle timer resumes
+    end
+```
+
+### Deno function code
+
+Use the global `EdgeRuntime.waitUntil()` to register promises that should complete after the response is sent:
+
+```ts
+// functions/analytics/index.ts
+Deno.serve(async (req) => {
+  const data = await req.json();
+
+  // Fire-and-forget: response returns immediately,
+  // background task continues running
+  EdgeRuntime.waitUntil(
+    fetch("https://analytics.example.com/events", {
+      method: "POST",
+      body: JSON.stringify(data),
+    })
+  );
+
+  return new Response("accepted", { status: 202 });
+});
+```
+
+Multiple `waitUntil()` calls are supported — each adds to the set of tracked promises. Rejected promises are logged to stderr but do not crash the worker.
+
+### Server configuration
+
+```ts
+const server = new EdgeFunctionServer({
+  functionsDir: "./functions",
+  port: 3000,
+  // Time allowed for background tasks after response (default: 30s)
+  backgroundTaskTimeout: 30_000,
+  // Pending background tasks prevent idle timeout (default: true)
+  backgroundTaskKeepsAlive: true,
+});
+```
+
+### Per-function overrides
+
+Override background task settings per function via `function.json`:
+
+```json
+{
+  "backgroundTaskTimeout": 60000,
+  "backgroundTaskKeepsAlive": true
+}
+```
+
+### How it works
+
+1. The bootstrap layer exposes `EdgeRuntime.waitUntil(promise)` as a global before user code runs.
+2. When a promise is registered, the bootstrap sends a structured message to the host via stderr.
+3. The host tracks pending background tasks per worker instance.
+4. The idle timeout timer is paused while background tasks are pending (when `backgroundTaskKeepsAlive` is `true`).
+5. If background tasks exceed `backgroundTaskTimeout` after the last response, the worker is terminated.
+
+### Timeout and idle timer lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: Worker spawned
+
+    Idle --> Active: Request arrives
+    Active --> Active: More requests
+
+    Active --> BgTaskRunning: Response sent,<br/>bg tasks pending
+    BgTaskRunning --> BgTaskRunning: New request<br/>(timeout resets)
+
+    BgTaskRunning --> Idle: All bg tasks complete<br/>(idle timer starts)
+    BgTaskRunning --> Terminated: backgroundTaskTimeout<br/>exceeded
+
+    Idle --> Terminated: idleTimeout exceeded
+    Terminated --> [*]
+
+    note right of BgTaskRunning
+        Idle timer paused when
+        backgroundTaskKeepsAlive = true
+    end note
+```
+
+### Timeout behavior
+
+The background task timeout starts when `activeRequests` drops to 0 while background tasks are still pending. If a new request arrives, the timer resets. When the timeout fires, the worker is terminated (consistent with `workerMaxDuration` behavior) and the lifecycle manager respawns if below `minWorkers`.
+
+### Graceful shutdown
+
+When `server.stop()` is called, the server waits for pending background tasks to drain (up to `backgroundTaskTimeout`) before terminating workers. This ensures in-flight background work completes during normal shutdown.
 
 ## Configuration
 
@@ -1016,11 +1147,14 @@ All options for `newDenoHTTPWorker` are partial (have defaults). Key options:
 | `defaultPermissionProfile` | `string`                                              | Default permission profile for all functions (default: `"standard"`)                            |
 | `functionPermissions`      | `Record<string, string \| string[]>`                  | Per-function permission overrides (priority over function.json)                                 |
 | `permissionProfiles`       | `Record<string, string[]>`                            | Custom named permission profiles (merged with built-ins)                                        |
-| `maxWebSocketConnections`  | `number`                                              | Max WebSocket connections per worker instance (default: `100`)                                  |
-| `websocketKeepsAlive`      | `boolean`                                             | Active WebSocket connections prevent idle timeout; does not affect `workerMaxDuration` (default: `true`) |
+| `maxWebSocketConnections`  | `number`                                              | Max WebSocket connections per worker instance (default: `100`). Overridable per function via `function.json`. |
+| `globalMaxWebSocketConnections` | `number`                                         | Server-wide cap on total WebSocket connections across all functions/workers. When not set, no global cap is enforced. |
+| `websocketKeepsAlive`      | `boolean`                                             | Active WebSocket connections prevent idle timeout; does not affect `workerMaxDuration` (default: `true`). Overridable per function via `function.json`. |
 | `onWebSocketConnect`       | `(functionName: string, connectionId: string) => void` | Called when a WebSocket connection is established                                              |
 | `onWebSocketClose`         | `(functionName: string, connectionId: string, code: number, reason: string) => void` | Called when a WebSocket connection is closed                    |
 | `onWebSocketError`         | `(functionName: string, connectionId: string, error: Error) => void` | Called when a WebSocket connection errors                                        |
+| `backgroundTaskTimeout`    | `number`                                                             | Max time (ms) to wait for background tasks after last response (default: `30000`). Overridable per function via `function.json`. |
+| `backgroundTaskKeepsAlive` | `boolean`                                                            | Pending background tasks prevent idle timeout (default: `true`). Overridable per function via `function.json`. |
 
 ## Logging
 

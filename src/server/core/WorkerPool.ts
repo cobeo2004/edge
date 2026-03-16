@@ -67,11 +67,21 @@ export class WorkerPool {
       switch (result.kind) {
         case "instance":
           // Skip instances at WebSocket capacity — try to scale up or wait
-          if (
-            this.#wsProxyHandler &&
-            !this.#wsProxyHandler.canAcceptConnection(name, result.instance.id)
-          ) {
-            continue;
+          if (this.#wsProxyHandler) {
+            const fnCfg = this.#registry.getFunctionConfig(name);
+            const perWorkerLimit =
+              fnCfg?.maxWebSocketConnections ??
+              this.#serverOptions.maxWebSocketConnections ??
+              100;
+            if (
+              !this.#wsProxyHandler.canAcceptConnection(
+                name,
+                result.instance.id,
+                perWorkerLimit
+              )
+            ) {
+              continue;
+            }
           }
           return result.instance;
 
@@ -179,6 +189,7 @@ export class WorkerPool {
         activeRequests: 0,
         restartCount: 0,
         instances: [],
+        totalBackgroundTasks: 0,
       };
     }
     return manager.getStats();
@@ -299,6 +310,15 @@ export class WorkerPool {
       fnConfig?.idleTimeout ?? this.#serverOptions.idleTimeout;
     const healthCheckConfig = this.#resolveHealthCheckConfig();
 
+    const backgroundTaskTimeout =
+      fnConfig?.backgroundTaskTimeout ??
+      this.#serverOptions.backgroundTaskTimeout ??
+      30_000;
+    const backgroundTaskKeepsAlive =
+      fnConfig?.backgroundTaskKeepsAlive ??
+      this.#serverOptions.backgroundTaskKeepsAlive ??
+      true;
+
     manager = new WorkerLifecycleManager({
       functionName: name,
       minWorkers: finalMin,
@@ -308,7 +328,11 @@ export class WorkerPool {
       onFunctionCold: this.#serverOptions.onFunctionCold,
       onFunctionReady: this.#serverOptions.onFunctionReady,
       onWorkerUnhealthy: this.#serverOptions.onWorkerUnhealthy,
-      websocketKeepsAlive: this.#serverOptions.websocketKeepsAlive,
+      websocketKeepsAlive:
+        fnConfig?.websocketKeepsAlive ??
+        this.#serverOptions.websocketKeepsAlive,
+      backgroundTaskKeepsAlive,
+      backgroundTaskTimeout,
       onNeedSpawn: (fnName) => {
         // Health check detected we're below minWorkers — spawn replacement
         this.getOrCreate(fnName).catch((err) => {
@@ -451,6 +475,25 @@ export class WorkerPool {
         userOptions.requestTimeout ?? this.#serverOptions.requestTimeout,
       workerMaxDuration:
         userOptions.workerMaxDuration ?? this.#serverOptions.workerMaxDuration,
+      onBackgroundTaskStarted: () => {
+        this.#managers.get(name)?.incrementBackgroundTasks(instanceId);
+        userOptions.onBackgroundTaskStarted?.();
+      },
+      onBackgroundTaskComplete: () => {
+        this.#managers.get(name)?.decrementBackgroundTasks(instanceId);
+        userOptions.onBackgroundTaskComplete?.();
+      },
     });
+  }
+
+  async gracefulTerminateAll(timeout?: number): Promise<void> {
+    this.#disposed = true;
+    const promises: Promise<void>[] = [];
+    for (const manager of this.#managers.values()) {
+      promises.push(manager.gracefulDispose(timeout));
+    }
+    await Promise.allSettled(promises);
+    this.#managers.clear();
+    this.#workerPromises.clear();
   }
 }

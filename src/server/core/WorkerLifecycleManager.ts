@@ -17,6 +17,8 @@ export interface WorkerLifecycleManagerOptions {
     maxFailures: number;
   };
   websocketKeepsAlive?: boolean;
+  backgroundTaskKeepsAlive?: boolean;
+  backgroundTaskTimeout?: number;
   onFunctionCold?: (name: string) => void;
   onFunctionReady?: (name: string) => void;
   onWorkerUnhealthy?: (name: string, failures: number) => void;
@@ -44,6 +46,10 @@ export class WorkerLifecycleManager {
   #generation = 0;
   #wsConnectionCounts: Map<string, number> = new Map();
   #websocketKeepsAlive: boolean;
+  #bgTaskCounts: Map<string, number> = new Map();
+  #bgTimeoutTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  #backgroundTaskKeepsAlive: boolean;
+  #backgroundTaskTimeout?: number;
 
   constructor(options: WorkerLifecycleManagerOptions) {
     this.#functionName = options.functionName;
@@ -52,6 +58,8 @@ export class WorkerLifecycleManager {
     this.#idleTimeout = options.idleTimeout;
     this.#healthCheckConfig = options.healthCheckConfig;
     this.#websocketKeepsAlive = options.websocketKeepsAlive ?? true;
+    this.#backgroundTaskKeepsAlive = options.backgroundTaskKeepsAlive ?? true;
+    this.#backgroundTaskTimeout = options.backgroundTaskTimeout;
     this.#options = options;
   }
 
@@ -189,6 +197,8 @@ export class WorkerLifecycleManager {
     const instance = this.#instances[idx]!;
     this.#clearIdleTimer(instance);
     this.#stopHealthCheck(instance);
+    this.#bgTaskCounts.delete(id);
+    this.#clearBgTimeoutTimer(id);
 
     // Splice BEFORE terminate — terminate() fires exit listeners
     // synchronously, which could re-enter removeInstance().
@@ -222,6 +232,7 @@ export class WorkerLifecycleManager {
     const instance = this.#findInstance(id);
     if (!instance) return;
     this.#clearIdleTimer(instance);
+    this.#clearBgTimeoutTimer(id);
     instance.activeRequests++;
     instance.totalRequests++;
   }
@@ -231,6 +242,9 @@ export class WorkerLifecycleManager {
     if (!instance) return;
     instance.activeRequests = Math.max(0, instance.activeRequests - 1);
     if (instance.activeRequests === 0) {
+      if (this.getBackgroundTaskCount(id) > 0) {
+        this.#startBgTimeoutTimer(id);
+      }
       this.#startIdleTimer(instance);
     }
   }
@@ -241,6 +255,13 @@ export class WorkerLifecycleManager {
     if (this.#idleTimeout === undefined || this.#idleTimeout <= 0) return;
     // Don't start idle timer if WebSocket connections are keeping the worker alive
     if (this.#websocketKeepsAlive && this.getWebSocketCount(instance.id) > 0) {
+      return;
+    }
+    // Don't start idle timer if background tasks are keeping the worker alive
+    if (
+      this.#backgroundTaskKeepsAlive &&
+      this.getBackgroundTaskCount(instance.id) > 0
+    ) {
       return;
     }
     this.#clearIdleTimer(instance);
@@ -433,6 +454,74 @@ export class WorkerLifecycleManager {
     return this.#wsConnectionCounts.get(instanceId) ?? 0;
   }
 
+  // --- Background task tracking ---
+
+  incrementBackgroundTasks(instanceId: string): void {
+    const current = this.#bgTaskCounts.get(instanceId) ?? 0;
+    this.#bgTaskCounts.set(instanceId, current + 1);
+
+    if (this.#backgroundTaskKeepsAlive) {
+      const instance = this.#findInstance(instanceId);
+      if (instance) {
+        this.#clearIdleTimer(instance);
+      }
+    }
+  }
+
+  decrementBackgroundTasks(instanceId: string): void {
+    const current = this.#bgTaskCounts.get(instanceId) ?? 0;
+    const next = Math.max(0, current - 1);
+    this.#bgTaskCounts.set(instanceId, next);
+
+    if (next === 0) {
+      this.#clearBgTimeoutTimer(instanceId);
+
+      if (this.#backgroundTaskKeepsAlive) {
+        const instance = this.#findInstance(instanceId);
+        if (
+          instance &&
+          instance.activeRequests === 0 &&
+          !(this.#websocketKeepsAlive && this.getWebSocketCount(instanceId) > 0)
+        ) {
+          this.#startIdleTimer(instance);
+        }
+      }
+    }
+  }
+
+  getBackgroundTaskCount(instanceId: string): number {
+    return this.#bgTaskCounts.get(instanceId) ?? 0;
+  }
+
+  #startBgTimeoutTimer(instanceId: string): void {
+    if (
+      this.#backgroundTaskTimeout === undefined ||
+      this.#backgroundTaskTimeout <= 0
+    )
+      return;
+    this.#clearBgTimeoutTimer(instanceId);
+
+    const timer = setTimeout(() => {
+      this.#bgTimeoutTimers.delete(instanceId);
+      if (this.getBackgroundTaskCount(instanceId) > 0) {
+        console.warn(
+          `[edge] "${this.#functionName}": background task timeout (${this.#backgroundTaskTimeout}ms) exceeded with ${this.getBackgroundTaskCount(instanceId)} pending task(s), terminating worker ${instanceId}`
+        );
+        this.removeInstance(instanceId);
+      }
+    }, this.#backgroundTaskTimeout);
+
+    this.#bgTimeoutTimers.set(instanceId, timer);
+  }
+
+  #clearBgTimeoutTimer(instanceId: string): void {
+    const timer = this.#bgTimeoutTimers.get(instanceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.#bgTimeoutTimers.delete(instanceId);
+    }
+  }
+
   // --- Stats ---
 
   getStats(): PoolStats {
@@ -442,6 +531,7 @@ export class WorkerLifecycleManager {
       activeRequests: i.activeRequests,
       totalRequests: i.totalRequests,
       uptimeMs: now - i.spawnTime,
+      backgroundTaskCount: this.getBackgroundTaskCount(i.id),
     }));
 
     return {
@@ -453,6 +543,10 @@ export class WorkerLifecycleManager {
       ),
       activeRequests: this.#instances.reduce(
         (sum, i) => sum + i.activeRequests,
+        0
+      ),
+      totalBackgroundTasks: this.#instances.reduce(
+        (sum, i) => sum + this.getBackgroundTaskCount(i.id),
         0
       ),
       restartCount: this.#restartCount,
@@ -474,6 +568,11 @@ export class WorkerLifecycleManager {
     this.#spawnResolvers = [];
     this.#spawningCount = 0;
     this.#wsConnectionCounts.clear();
+    this.#bgTaskCounts.clear();
+    for (const timer of this.#bgTimeoutTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.#bgTimeoutTimers.clear();
     for (const resolve of resolvers) {
       resolve();
     }
@@ -483,6 +582,42 @@ export class WorkerLifecycleManager {
       this.#stopHealthCheck(instance);
       instance.worker.terminate();
     }
+  }
+
+  async gracefulDispose(timeout?: number): Promise<void> {
+    const effectiveTimeout = timeout ?? this.#backgroundTaskTimeout ?? 30_000;
+
+    const drainPromises = this.#instances
+      .filter((i) => this.getBackgroundTaskCount(i.id) > 0)
+      .map((i) => this.#waitForBackgroundTasks(i.id, effectiveTimeout));
+
+    if (drainPromises.length > 0) {
+      await Promise.allSettled(drainPromises);
+    }
+
+    this.dispose();
+  }
+
+  #waitForBackgroundTasks(instanceId: string, timeout: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (this.getBackgroundTaskCount(instanceId) === 0) {
+        resolve();
+        return;
+      }
+
+      const timeoutId = setTimeout(() => {
+        clearInterval(checkInterval);
+        resolve();
+      }, timeout);
+
+      const checkInterval = setInterval(() => {
+        if (this.getBackgroundTaskCount(instanceId) === 0) {
+          clearTimeout(timeoutId);
+          clearInterval(checkInterval);
+          resolve();
+        }
+      }, 50);
+    });
   }
 
   // --- Restart (hot-reload) ---

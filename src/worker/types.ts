@@ -179,6 +179,11 @@ export interface DenoWorkerOptions {
    * Only used by EdgeFunctionServer.
    */
   healthCheckMaxFailures?: number;
+
+  /** Called when a background task starts (via EdgeRuntime.waitUntil) */
+  onBackgroundTaskStarted?: () => void;
+  /** Called when a background task completes (resolved or rejected) */
+  onBackgroundTaskComplete?: () => void;
 }
 
 export interface RequestStats {
